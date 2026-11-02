@@ -6,8 +6,22 @@ module.exports = function ({ print }) {
   const ttEventLog = print({ platform: 'bytedance', tag: TAG_NAME, isError: false, type: 'event' })
   const jdPropLog = print({ platform: 'jd', tag: TAG_NAME, isError: false })
   const qaEventLog = print({ platform: 'qa', tag: TAG_NAME, isError: false, type: 'event' })
+  const ksPropLog = print({ platform: 'ks', tag: TAG_NAME, isError: false })
+  const ksEventLog = print({ platform: 'ks', tag: TAG_NAME, isError: false, type: 'event' })
   return {
     test: TAG_NAME,
+    android (tag, { el }) {
+      el.isBuiltIn = true
+      return 'mpx-canvas'
+    },
+    harmony (tag, { el }) {
+      el.isBuiltIn = true
+      return 'mpx-canvas'
+    },
+    ios (tag, { el }) {
+      el.isBuiltIn = true
+      return 'mpx-canvas'
+    },
     props: [
       {
         test: /^canvas-id$/,
@@ -25,6 +39,10 @@ module.exports = function ({ print }) {
       {
         test: 'type',
         jd: jdPropLog
+      },
+      {
+        test: /^(type|disable-scroll)$/,
+        ks: ksPropLog
       }
     ],
     // 组件事件中的差异部分
@@ -35,11 +53,11 @@ module.exports = function ({ print }) {
         test: /^(touchstart|touchmove|touchend|touchcancel|longtap)$/,
         ali (eventName) {
           const eventMap = {
-            'touchstart': 'touchStart',
-            'touchmove': 'touchMove',
-            'touchend': 'touchEnd',
-            'touchcancel': 'touchCancel',
-            'longtap': 'longTap'
+            touchstart: 'touchStart',
+            touchmove: 'touchMove',
+            touchend: 'touchEnd',
+            touchcancel: 'touchCancel',
+            longtap: 'longTap'
           }
           return eventMap[eventName]
         }
@@ -51,7 +69,8 @@ module.exports = function ({ print }) {
       {
         test: /^(longtap|error)$/,
         tt: ttEventLog,
-        qa: qaEventLog
+        qa: qaEventLog,
+        ks: ksEventLog
       }
     ]
   }

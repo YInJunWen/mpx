@@ -1,17 +1,14 @@
 import transferOptions from '../../core/transferOptions'
 import getBuiltInMixins from '../builtInMixins/index'
-import { getDefaultOptions as getWxDefaultOptions } from './wx/getDefaultOptions'
-import { getDefaultOptions as getAliDefaultOptions } from './ali/getDefaultOptions'
-import { getDefaultOptions as getSwanDefaultOptions } from './swan/getDefaultOptions'
-import { getDefaultOptions as getWebDefaultOptions } from './web/getDefaultOptions'
-import { error } from '../../helper/log'
+import { getDefaultOptions } from './getDefaultOptions'
+import { error, isReact, isWeb } from '@mpxjs/utils'
 
 export default function createFactory (type) {
-  return (options, { isNative, customCtor, customCtorType } = {}) => {
+  return (options = {}, { isNative, customCtor, customCtorType } = {}) => {
     options.__nativeRender__ = !!isNative
     options.__type__ = type
     let ctor
-    if (__mpx_mode__ !== 'web') {
+    if (!isWeb && !isReact) {
       if (customCtor) {
         ctor = customCtor
         customCtorType = customCtorType || type
@@ -38,34 +35,19 @@ export default function createFactory (type) {
       }
     }
 
-    let getDefaultOptions
-    if (__mpx_mode__ === 'web') {
-      getDefaultOptions = getWebDefaultOptions
-    } else if (__mpx_mode__ === 'ali') {
-      getDefaultOptions = getAliDefaultOptions
-    } else if (__mpx_mode__ === 'swan') {
-      getDefaultOptions = getSwanDefaultOptions
-    } else {
-      getDefaultOptions = getWxDefaultOptions
-    }
-
+    const { setup } = options
     const { rawOptions, currentInject } = transferOptions(options, type)
+    rawOptions.setup = setup
+    // 不接受mixin中的setup配置
     // 注入内建的mixins, 内建mixin是按原始平台编写的，所以合并规则和rootMixins保持一致
     // 将合并后的用户定义的rawOptions传入获取当前应该注入的内建mixins
-    rawOptions.mixins = getBuiltInMixins(rawOptions, type)
-    const defaultOptions = getDefaultOptions(type, { rawOptions, currentInject })
-    if (__mpx_mode__ === 'web') {
-      global.currentOption = defaultOptions
+    rawOptions.mixins = getBuiltInMixins({ type, rawOptions, currentInject })
+    const defaultOptions = getDefaultOptions({ type, rawOptions, currentInject })
+    if (isWeb || isReact) {
+      global.__mpxOptionsMap = global.__mpxOptionsMap || {}
+      global.__mpxOptionsMap[currentInject.moduleId] = defaultOptions
     } else if (ctor) {
       return ctor(defaultOptions)
-    }
-  }
-}
-
-export function getRenderCallBack (context) {
-  return () => {
-    if (__mpx_mode__ !== 'ali' || context.options.__type__ === 'page') {
-      context.updated()
     }
   }
 }

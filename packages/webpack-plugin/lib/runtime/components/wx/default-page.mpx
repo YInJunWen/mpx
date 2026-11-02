@@ -1,0 +1,19 @@
+<template>
+  <view>局部构建兜底页面：{{pageRoute}}</view>
+</template>
+
+<script>
+import { onLoad } from '@mpxjs/core'
+import { createPage } from '@mpxjs/core'
+
+createPage({
+  data() {
+    return {
+      pageRoute: ''
+    }
+  },
+  onLoad() {
+    this.pageRoute = this.route
+  }
+})
+</script>

@@ -1,0 +1,108 @@
+import { createContext, Dispatch, MutableRefObject, SetStateAction } from 'react'
+import type { NativeSyntheticEvent, Animated, ScaledSize, TextStyle } from 'react-native'
+import { noop } from '@mpxjs/utils'
+
+export type LabelContextValue = MutableRefObject<{
+  triggerChange: (evt: NativeSyntheticEvent<TouchEvent>) => void
+}>
+
+export type KeyboardAvoidContextValue = MutableRefObject<{
+  cursorSpacing: number
+  ref: MutableRefObject<any>
+  adjustPosition: boolean
+  holdKeyboard?: boolean
+  keyboardHeight?: number
+  /** @internal bindfocus 异步延迟上报方法 */
+  onKeyboardShow?: () => void
+  /** @internal 切换 Input 时禁止 keyboardDidHide 主动失焦的截止时间 */
+  preventBlurUntil?: number
+} | null>
+
+export interface GroupValue {
+  [key: string]: { checked: boolean; setValue: Dispatch<SetStateAction<boolean>> }
+}
+
+export interface GroupContextValue {
+  groupValue: GroupValue
+  notifyChange: (evt: NativeSyntheticEvent<TouchEvent>) => void
+}
+
+export interface FormFieldValue {
+  getValue: () => any
+  resetValue: ({ newVal, type }: { newVal?: any; type?: string }) => void
+}
+
+export interface FormContextValue {
+  formValuesMap: Map<string, FormFieldValue>
+  submit: () => void
+  reset: () => void
+}
+
+export interface IntersectionObserver {
+  [key: number]: {
+    throttleMeasure: () => void
+  }
+}
+
+export interface PortalContextValue {
+  mount: (children: React.ReactNode) => number
+  update: (key: number, children: React.ReactNode) => void
+  unmount: (key: number) => void
+}
+
+export interface ScrollViewContextValue {
+  gestureRef: React.RefObject<any> | null
+  scrollOffset: Animated.Value | null
+}
+
+export interface RouteContextValue {
+  pageId: number
+  navigation: Record<string, any>
+}
+
+export interface DimensionsValue {
+  window: ScaledSize;
+  screen: ScaledSize;
+}
+
+export interface StickyContextValue {
+  registerStickyHeader: Function
+  unregisterStickyHeader: Function
+}
+
+export interface TextPassThroughContextValue {
+  textStyle?: TextStyle
+  pendingTextProps?: Record<string, any>
+}
+
+export const MovableAreaContext = createContext({ width: 0, height: 0 })
+
+export const FormContext = createContext<FormContextValue | null>(null)
+
+export const CheckboxGroupContext = createContext<GroupContextValue | null>(null)
+
+export const RadioGroupContext = createContext<GroupContextValue | null>(null)
+
+export const LabelContext = createContext<LabelContextValue | null>(null)
+
+export const PickerContext = createContext(null)
+
+export const VarContext = createContext({})
+
+export const TextPassThroughContext = createContext<TextPassThroughContextValue | null>(null)
+
+export const IntersectionObserverContext = createContext<IntersectionObserver | null>(null)
+
+export const RouteContext = createContext<RouteContextValue | null>(null)
+
+export const SwiperContext = createContext({})
+
+export const KeyboardAvoidContext = createContext<KeyboardAvoidContextValue | null>(null)
+
+export const ScrollViewContext = createContext<ScrollViewContextValue>({ gestureRef: null, scrollOffset: null })
+
+export const PortalContext = createContext<PortalContextValue>(null as any)
+
+export const StickyContext = createContext<StickyContextValue>({ registerStickyHeader: noop, unregisterStickyHeader: noop })
+
+export const ProviderContext = createContext(null)

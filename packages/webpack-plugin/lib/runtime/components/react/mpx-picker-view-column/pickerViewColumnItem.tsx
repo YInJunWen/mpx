@@ -1,0 +1,67 @@
+import React, { useMemo } from 'react'
+import { LayoutChangeEvent } from 'react-native'
+import Reanimated, { Extrapolation, interpolate, useAnimatedStyle } from 'react-native-reanimated'
+import { extendObject } from '../utils'
+import { createFaces } from './pickerViewFaces'
+import { usePickerViewColumnAnimationContext } from '../mpx-picker-view/pickerVIewContext'
+
+interface PickerColumnItemProps {
+  item: React.ReactElement
+  index: number
+  itemHeight: number
+  itemWidth?: number | '100%'
+  visibleCount: number
+  onItemLayout?: (e: LayoutChangeEvent) => void
+}
+
+const PickerViewColumnItem: React.FC<PickerColumnItemProps> = ({
+  item,
+  index,
+  itemHeight,
+  itemWidth = '100%',
+  visibleCount,
+  onItemLayout
+}) => {
+  const offsetYShared = usePickerViewColumnAnimationContext()
+  const facesShared = useMemo(() => createFaces(itemHeight, visibleCount), [itemHeight, visibleCount])
+
+  const animatedStyles = useAnimatedStyle(() => {
+    const inputRange = facesShared.map((f) => itemHeight * (index + f.index))
+    return {
+      opacity: interpolate(offsetYShared.value, inputRange, facesShared.map((x) => x.opacity), Extrapolation.CLAMP),
+      transform: [
+        { translateY: interpolate(offsetYShared.value, inputRange, facesShared.map((x) => x.offsetY), Extrapolation.EXTEND) },
+        { rotateX: interpolate(offsetYShared.value, inputRange, facesShared.map((x) => x.deg), Extrapolation.CLAMP) + 'deg' },
+        { scale: interpolate(offsetYShared.value, inputRange, facesShared.map((x) => x.scale), Extrapolation.EXTEND) }
+      ]
+    }
+  })
+
+  const strKey = `picker-column-item-${index}`
+  const restProps = index === 0 ? { onLayout: onItemLayout } : {}
+  const itemProps = extendObject(
+    {
+      style: extendObject(
+        { height: itemHeight, width: '100%' },
+        item.props.style
+      )
+    },
+    restProps
+  )
+  const realItem = React.cloneElement(item, itemProps)
+
+  return (
+    <Reanimated.View
+      key={strKey}
+      style={[
+        { height: itemHeight, width: itemWidth, pointerEvents: 'none' },
+        animatedStyles
+      ]}
+    >
+        {realItem}
+    </Reanimated.View>
+  )
+}
+
+PickerViewColumnItem.displayName = 'MpxPickerViewColumnItem'
+export default PickerViewColumnItem

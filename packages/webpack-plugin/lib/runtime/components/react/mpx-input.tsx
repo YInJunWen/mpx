@@ -1,0 +1,569 @@
+/**
+ * ✔ value
+ * - type: Partially. Not support `safe-password`、`nickname`
+ * ✔ password
+ * ✔ placeholder
+ * - placeholder-style: Only support color.
+ * - placeholder-class: Only support color.
+ * ✔ disabled
+ * ✔ maxlength
+ * ✔ cursor-spacing
+ * ✔ auto-focus
+ * ✔ focus
+ * ✔ confirm-type
+ * ✘ always-embed
+ * ✔ confirm-hold
+ * ✔ cursor
+ * ✔ cursor-color
+ * ✔ selection-start
+ * ✔ selection-end
+ * ✔ adjust-position
+ * ✔ hold-keyboard
+ * ✘ safe-password-cert-path
+ * ✘ safe-password-length
+ * ✘ safe-password-time-stamp
+ * ✘ safe-password-nonce
+ * ✘ safe-password-salt
+ * ✘ safe-password-custom-hash
+ * - bindinput: No `keyCode` info.
+ * - bindfocus: No `height` info.
+ * - bindblur: No `encryptedValue`、`encryptError` info.
+ * ✔ bindconfirm
+ * ✘ bindkeyboardheightchange
+ * ✘ bindnicknamereview
+ * ✔ bindselectionchange
+ * ✘ bindkeyboardcompositionstart
+ * ✘ bindkeyboardcompositionupdate
+ * ✘ bindkeyboardcompositionend
+ * ✘ bindonkeyboardheightchange
+ */
+import { JSX, forwardRef, useRef, useState, useContext, useEffect, createElement } from 'react'
+import {
+  TextInput,
+  TextStyle,
+  ViewStyle,
+  NativeSyntheticEvent,
+  TextInputTextInputEventData,
+  TextInputKeyPressEventData,
+  TextInputContentSizeChangeEventData,
+  FlexStyle,
+  TextInputSelectionChangeEventData,
+  TextInputFocusEventData,
+  TextInputChangeEventData,
+  TextInputSubmitEditingEventData,
+  NativeTouchEvent
+} from 'react-native'
+import { warn } from '@mpxjs/utils'
+import { useUpdateEffect, useTransformStyle, useLayout, extendObject, isAndroid, getDefaultAllowFontScaling } from './utils'
+import useInnerProps, { getCustomEvent } from './getInnerListeners'
+import useNodesRef, { HandlerRef } from './useNodesRef'
+import { FormContext, FormFieldValue, KeyboardAvoidContext } from './context'
+import Portal from './mpx-portal'
+
+type InputStyle = Omit<
+  TextStyle & ViewStyle & Pick<FlexStyle, 'minHeight'>,
+  | 'borderLeftWidth'
+  | 'borderTopWidth'
+  | 'borderRightWidth'
+  | 'borderBottomWidth'
+  | 'borderTopLeftRadius'
+  | 'borderTopRightRadius'
+  | 'borderBottomRightRadius'
+  | 'borderBottomLeftRadius'
+>
+
+type Type = 'text' | 'number' | 'idcard' | 'digit'
+
+type ConfirmType = 'done' | 'send' | 'search' | 'next' | 'go' | 'return'
+
+export interface InputProps {
+  name?: string
+  style?: InputStyle & Record<string, any>
+  value?: string | number
+  type?: Type
+  password?: boolean
+  placeholder?: string
+  disabled?: boolean
+  'cursor-spacing'?: number
+  maxlength?: number
+  'auto-focus'?: boolean
+  focus?: boolean
+  'confirm-type'?: ConfirmType
+  'confirm-hold'?: boolean
+  cursor?: number
+  'cursor-color'?: string
+  'selection-start'?: number
+  'selection-end'?: number
+  'placeholder-style'?: { color?: string }
+  'enable-offset'?: boolean
+  'enable-var'?: boolean
+  'parent-width'?: number
+  'parent-height'?: number
+  // 只有 RN 环境读取
+  'keyboard-type'?: string
+  'adjust-position': boolean
+  'hold-keyboard'?: boolean
+  bindinput?: (evt: NativeSyntheticEvent<TextInputTextInputEventData> | unknown) => void
+  bindfocus?: (evt: NativeSyntheticEvent<TextInputFocusEventData> | unknown) => void
+  bindblur?: (evt: NativeSyntheticEvent<TextInputFocusEventData> | unknown) => void
+  bindconfirm?: (evt: NativeSyntheticEvent<TextInputSubmitEditingEventData | TextInputKeyPressEventData> | unknown) => void
+  bindselectionchange?: (evt: NativeSyntheticEvent<TextInputSelectionChangeEventData> | unknown) => void
+}
+
+export interface PrivateInputProps {
+  allowFontScaling?: boolean
+  multiline?: boolean
+  'auto-height'?: boolean
+  bindlinechange?: (evt: NativeSyntheticEvent<TextInputContentSizeChangeEventData> | unknown) => void
+}
+
+type FinalInputProps = InputProps & PrivateInputProps
+
+const inputModeMap: Record<Type, string> = {
+  text: 'text',
+  number: 'numeric',
+  idcard: 'text',
+  digit: 'decimal'
+}
+
+const INPUT_SWITCH_BLUR_GUARD_DURATION = 100
+
+const Input = forwardRef<HandlerRef<TextInput, FinalInputProps>, FinalInputProps>((props: FinalInputProps, ref): JSX.Element => {
+  const {
+    style = {},
+    allowFontScaling,
+    type = 'text',
+    value,
+    password,
+    'placeholder-style': placeholderStyle = {},
+    disabled,
+    maxlength = 140,
+    'cursor-spacing': cursorSpacing = 0,
+    'auto-focus': autoFocus,
+    focus,
+    'confirm-type': confirmType = 'done',
+    'confirm-hold': confirmHold = false,
+    cursor,
+    'cursor-color': cursorColor,
+    'selection-start': selectionStart = -1,
+    'selection-end': selectionEnd = -1,
+    'enable-var': enableVar,
+    'parent-width': parentWidth,
+    'parent-height': parentHeight,
+    'adjust-position': adjustPosition = true,
+    'keyboard-type': originalKeyboardType,
+    'hold-keyboard': holdKeyboard = false,
+    bindinput,
+    bindfocus,
+    bindblur,
+    bindconfirm,
+    bindselectionchange,
+    // private
+    multiline,
+    'auto-height': autoHeight,
+    bindlinechange
+  } = props
+
+  const formContext = useContext(FormContext)
+
+  const keyboardAvoid = useContext(KeyboardAvoidContext)
+
+  let formValuesMap: Map<string, FormFieldValue> | undefined
+
+  if (formContext) {
+    formValuesMap = formContext.formValuesMap
+  }
+
+  const parseValue = (value: string | number | undefined): string => {
+    if (typeof value === 'string') {
+      if (value.length > maxlength && maxlength >= 0) {
+        return value.slice(0, maxlength)
+      }
+      return value
+    }
+    if (typeof value === 'number') return value + ''
+    return ''
+  }
+
+  const defaultValue = parseValue(value)
+  // 微信小程序的 input 永远是单行，textAlignVertical 固定为 auto
+  // multiline 为 true 时表示是 textarea 组件复用此逻辑
+  const textAlignVertical = multiline ? 'top' : 'auto'
+  const isAutoFocus = !!autoFocus || !!focus
+
+  const tmpValue = useRef<string>(defaultValue)
+  const cursorIndex = useRef<number>(0)
+  const lineCount = useRef<number>(0)
+
+  const [inputValue, setInputValue] = useState(defaultValue)
+  const [contentHeight, setContentHeight] = useState(0)
+  const [selection, setSelection] = useState({ start: -1, end: tmpValue.current.length })
+  const styleObj = extendObject(
+    { padding: 0, backgroundColor: '#fff' },
+    style,
+    multiline && autoHeight ? { height: 'auto' } : {}
+  )
+
+  const {
+    hasPositionFixed,
+    hasSelfPercent,
+    normalStyle,
+    setWidth,
+    setHeight
+  } = useTransformStyle(styleObj, { enableVar, parentWidth, parentHeight })
+
+  const nodeRef = useRef(null)
+  useNodesRef(props, ref, nodeRef, {
+    style: normalStyle
+  })
+
+  const { layoutRef, layoutStyle, layoutProps } = useLayout({ props, hasSelfPercent, setWidth, setHeight, nodeRef })
+
+  useEffect(() => {
+    if (value !== tmpValue.current) {
+      const parsed = parseValue(value)
+      tmpValue.current = parsed
+      setInputValue(parsed)
+    }
+  }, [value])
+
+  useEffect(() => {
+    if (selectionStart > -1) {
+      setSelection({ start: selectionStart, end: selectionEnd === -1 ? tmpValue.current.length : selectionEnd })
+    } else if (typeof cursor === 'number') {
+      setSelection({ start: cursor, end: cursor })
+    }
+  }, [cursor, selectionStart, selectionEnd])
+
+  // have not selection on the Android platformg
+  const getCursorIndex = (
+    changedSelection: TextInputSelectionChangeEventData['selection'] | undefined,
+    prevValue: string,
+    curValue: string
+  ) => {
+    if (changedSelection) return changedSelection.end
+    if (!prevValue || !curValue || prevValue.length === curValue.length) return curValue.length
+    const prevStr = prevValue.substring(cursorIndex.current)
+    const curStr = curValue.substring(cursorIndex.current)
+    return cursorIndex.current + curStr.length - prevStr.length
+  }
+
+  const onChange = (evt: NativeSyntheticEvent<TextInputChangeEventData & TextInputSelectionChangeEventData>) => {
+    const { text, selection } = evt.nativeEvent
+    // will trigger twice on the Android platformg, prevent the second trigger
+    if (tmpValue.current === text) return
+    const index = getCursorIndex(selection, tmpValue.current, text)
+    tmpValue.current = text
+    cursorIndex.current = index
+    if (bindinput) {
+      const result = bindinput(
+        getCustomEvent(
+          'input',
+          evt,
+          {
+            detail: {
+              value: tmpValue.current,
+              cursor: cursorIndex.current
+            },
+            layoutRef
+          },
+          props
+        )
+      )
+      if (typeof result === 'string') {
+        tmpValue.current = result
+        setInputValue(result)
+      } else {
+        setInputValue(tmpValue.current)
+      }
+    } else {
+      setInputValue(tmpValue.current)
+    }
+  }
+
+  const setKeyboardAvoidContext = () => {
+    if (keyboardAvoid) {
+      const preventBlurUntil = keyboardAvoid.current && keyboardAvoid.current.ref !== nodeRef
+        ? Date.now() + INPUT_SWITCH_BLUR_GUARD_DURATION
+        : keyboardAvoid.current?.preventBlurUntil
+      keyboardAvoid.current = { cursorSpacing, ref: nodeRef, adjustPosition, holdKeyboard, preventBlurUntil }
+    }
+  }
+
+  const onTouchStart = () => {
+    // 手动聚焦时初始化 keyboardAvoid 上下文
+    // auto-focus/focus 不会触发而是在 useEffect 中初始化
+    setKeyboardAvoidContext()
+  }
+
+  const markEventOrigin = (evt: NativeSyntheticEvent<NativeTouchEvent & { origin?: string }>) => {
+    evt.nativeEvent.origin = 'input'
+  }
+
+  const onFocus = (evt: NativeSyntheticEvent<TextInputFocusEventData>) => {
+    if (!keyboardAvoid?.current) {
+      // Android：从一个正聚焦状态 input，聚焦到另一个新的 input 时，正常会触发如下时序：
+      // 新的 Input `onTouchStart` -> 旧输入框键盘 `keyboardDidHide` -> 新的 Input `onFocus`
+      // 导致这里的 keyboardAvoid.current 为 null，所以需要判空重新初始化。
+      setKeyboardAvoidContext()
+    }
+
+    const focusAction = () => {
+      bindfocus?.(
+        getCustomEvent(
+          'focus',
+          evt,
+          {
+            detail: {
+              value: tmpValue.current || '',
+              height: keyboardAvoid?.current?.keyboardHeight
+            },
+            layoutRef
+          },
+          props
+        )
+      )
+      if (keyboardAvoid?.current?.onKeyboardShow) {
+        keyboardAvoid.current.onKeyboardShow = undefined
+      }
+    }
+
+    if (keyboardAvoid?.current) {
+      // 有 keyboardAvoiding
+      if (keyboardAvoid.current.keyboardHeight) {
+        // 仅以下场景触发顺序：先 keyboardWillShow 获取高度 -> 后 onFocus，可以立即执行
+        // - iOS + 手动点击聚焦
+        focusAction()
+      } else {
+        // 其他场景触发顺序：先 onFocus -> 后 keyboardWillShow 获取高度 -> 执行回调
+        // - iOS + auto-focus/focus=true 自动聚焦
+        // - Android 手动点击聚焦/自动聚焦 都一样
+        evt.persist()
+        keyboardAvoid.current.onKeyboardShow = focusAction
+      }
+    } else {
+      // 兜底：无 keyboardAvoiding 直接执行 focus 回调
+      focusAction()
+    }
+  }
+
+  const onBlur = (evt: NativeSyntheticEvent<TextInputFocusEventData>) => {
+    bindblur && bindblur(
+      getCustomEvent(
+        'blur',
+        evt,
+        {
+          detail: {
+            value: tmpValue.current || '',
+            cursor: cursorIndex.current
+          },
+          layoutRef
+        },
+        props
+      )
+    )
+  }
+
+  const onSubmitEditing = (evt: NativeSyntheticEvent<TextInputSubmitEditingEventData>) => {
+    bindconfirm!(
+      getCustomEvent(
+        'confirm',
+        evt,
+        {
+          detail: {
+            value: tmpValue.current || ''
+          },
+          layoutRef
+        },
+        props
+      )
+    )
+  }
+
+  const onSelectionChange = (evt: NativeSyntheticEvent<TextInputSelectionChangeEventData>) => {
+    const { selection } = evt.nativeEvent
+    const { start, end } = selection
+    cursorIndex.current = start
+    setSelection(selection)
+    bindselectionchange && bindselectionchange(
+      getCustomEvent(
+        'selectionchange',
+        evt,
+        {
+          detail: {
+            selectionStart: start,
+            selectionEnd: end
+          },
+          layoutRef
+        },
+        props
+      )
+    )
+  }
+
+  const onContentSizeChange = (evt: NativeSyntheticEvent<TextInputContentSizeChangeEventData>) => {
+    const { width, height } = evt.nativeEvent.contentSize
+    if (width && height) {
+      if (!multiline || !autoHeight || height === contentHeight) return
+      lineCount.current += height > contentHeight ? 1 : -1
+      const lineHeight = lineCount.current === 0 ? 0 : height / lineCount.current
+      bindlinechange &&
+        bindlinechange(
+          getCustomEvent(
+            'linechange',
+            evt,
+            {
+              detail: {
+                height,
+                lineHeight,
+                lineCount: lineCount.current
+              },
+              layoutRef
+            },
+            props
+          )
+        )
+      setContentHeight(height)
+    }
+  }
+
+  const resetValue = () => {
+    tmpValue.current = ''
+    setInputValue('')
+  }
+
+  const getValue = () => {
+    return inputValue
+  }
+
+  if (formValuesMap) {
+    if (!props.name) {
+      warn('If a form component is used, the name attribute is required.')
+    } else {
+      formValuesMap.set(props.name, { getValue, resetValue })
+    }
+  }
+
+  useEffect(() => {
+    return () => {
+      if (formValuesMap && props.name) {
+        formValuesMap.delete(props.name)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    if (isAutoFocus) {
+      // auto-focus/focus=true 初始化 keyboardAvoidContext
+      setKeyboardAvoidContext()
+    }
+  }, [isAutoFocus])
+
+  useUpdateEffect(() => {
+    if (!nodeRef?.current) {
+      return
+    }
+    // RN autoFocus 属性仅在初次渲染时生效
+    // 后续更新需要手动调用 focus/blur 方法，和微信小程序对齐
+    isAutoFocus
+      ? (nodeRef.current as TextInput)?.focus()
+      : (nodeRef.current as TextInput)?.blur()
+  }, [isAutoFocus])
+
+  // 使用 multiline 来修复光标位置问题
+  // React Native 的 TextInput 在 textAlign center + placeholder 时光标会跑到右边
+  // 这个问题只在 Android 上出现
+  // 参考：https://github.com/facebook/react-native/issues/28794 (Android only)
+  const conditionalTextInputProps: {
+    multiline?: boolean
+    numberOfLines?: number
+    enterKeyHint?: ConfirmType
+  } = {}
+  if (isAndroid && !multiline && props.placeholder && normalStyle.textAlign === 'center') {
+    conditionalTextInputProps.multiline = true
+    conditionalTextInputProps.numberOfLines = 1
+  }
+  if (!multiline || confirmType !== 'return') {
+    conditionalTextInputProps.enterKeyHint = confirmType
+  }
+
+  const innerProps = useInnerProps(
+    extendObject(
+      {},
+      props,
+      layoutProps,
+      {
+        ref: nodeRef,
+        style: extendObject({}, normalStyle, layoutStyle),
+        allowFontScaling: allowFontScaling ?? getDefaultAllowFontScaling(),
+        inputMode: originalKeyboardType ? undefined : inputModeMap[type],
+        keyboardType: originalKeyboardType,
+        secureTextEntry: !!password,
+        defaultValue: defaultValue,
+        value: inputValue,
+        maxLength: maxlength === -1 ? undefined : maxlength,
+        editable: !disabled,
+        autoFocus: isAutoFocus,
+        selection: selectionStart > -1 || typeof cursor === 'number' ? selection : undefined,
+        selectionColor: cursorColor,
+        submitBehavior: multiline ? (confirmType === 'return' ? 'newline' : 'blurAndSubmit') : (confirmHold ? 'submit' : 'blurAndSubmit'),
+        underlineColorAndroid: 'rgba(0,0,0,0)',
+        textAlignVertical: textAlignVertical,
+        placeholderTextColor: placeholderStyle?.color,
+        multiline,
+        onTouchStart,
+        onTouchEnd: markEventOrigin,
+        onTouchMove: markEventOrigin,
+        onFocus,
+        onBlur,
+        onChange,
+        onSelectionChange,
+        onContentSizeChange,
+        onSubmitEditing: bindconfirm && onSubmitEditing
+      },
+      conditionalTextInputProps
+    ),
+    [
+      'name',
+      'type',
+      'maxlength',
+      'cursor-spacing',
+      'adjust-position',
+      'hold-keyboard',
+      'keyboard-type',
+      'auto-height',
+      'password',
+      'placeholder-style',
+      'disabled',
+      'auto-focus',
+      'focus',
+      'confirm-type',
+      'confirm-hold',
+      'cursor',
+      'cursor-color',
+      'selection-start',
+      'selection-end',
+      'bindinput',
+      'bindfocus',
+      'bindblur',
+      'bindconfirm',
+      'bindselectionchange',
+      'bindlinechange'
+    ],
+    {
+      layoutRef
+    }
+  )
+
+  const finalComponent = createElement(TextInput, innerProps)
+
+  if (hasPositionFixed) {
+    return createElement(Portal, null, finalComponent)
+  }
+
+  return finalComponent
+})
+
+Input.displayName = 'MpxInput'
+
+export default Input

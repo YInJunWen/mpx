@@ -1,8 +1,10 @@
-import { error } from '../helper/log'
+import { error } from '@mpxjs/utils'
 import { implemented } from '../core/implement'
 import { mergeLifecycle } from './mergeLifecycle'
-import * as wxLifecycle from '../platform/patch/wx/lifecycle'
-import * as swanLifecycle from '../platform/patch/swan/lifecycle'
+import * as wxLifecycle from '../platform/patch/lifecycle/index.wx'
+import { LIFECYCLE } from '../platform/patch/lifecycle/index'
+
+const isDev = process.env.NODE_ENV !== 'production'
 
 const BEHAVIORS_MAP = {
   'wx://form-field': 'swan://form-field',
@@ -12,14 +14,14 @@ const BEHAVIORS_MAP = {
 const unsupported = ['moved', 'relations']
 
 function convertErrorDesc (key) {
-  error(`Options.${key} is not supported in runtime conversion from wx to swan.`, global.currentResource)
+  error(`Options.${key} is not supported in runtime conversion from wx to swan.`, global.currentResource || global.currentModuleId)
 }
 
 function notSupportTip (options) {
   unsupported.forEach(key => {
     if (options[key]) {
       if (!implemented[key]) {
-        process.env.NODE_ENV !== 'production' && convertErrorDesc(key)
+        isDev && convertErrorDesc(key)
         delete options[key]
       } else if (implemented[key].remove) {
         delete options[key]
@@ -30,7 +32,7 @@ function notSupportTip (options) {
 
 export default {
   lifecycle: mergeLifecycle(wxLifecycle.LIFECYCLE),
-  lifecycle2: mergeLifecycle(swanLifecycle.LIFECYCLE),
+  lifecycle2: mergeLifecycle(LIFECYCLE),
   pageMode: 'blend',
   support: true,
   lifecycleProxyMap: wxLifecycle.lifecycleProxyMap,

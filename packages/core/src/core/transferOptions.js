@@ -1,31 +1,47 @@
 import { mergeInjectedMixins } from './injectMixins'
 import mergeOptions from './mergeOptions'
 import { getConvertMode } from '../convertor/getConvertMode'
-import { findItem } from '../helper/utils'
-import { warn } from '../helper/log'
+import { warn, findItem } from '@mpxjs/utils'
 
-export default function transferOptions (options, type) {
+export default function transferOptions (options, type, needConvert = true) {
   let currentInject
   if (global.currentInject && global.currentInject.moduleId === global.currentModuleId) {
     currentInject = global.currentInject
+  } else {
+    currentInject = {
+      moduleId: global.currentModuleId
+    }
   }
   // 文件编译路径
-  options.mpxFileResource = global.currentResource
+  options.mpxFileResource = global.currentResource || global.currentModuleId
   // 注入全局写入的mixins，原生模式下不进行注入
   if (!options.__nativeRender__) {
     options = mergeInjectedMixins(options, type)
   }
+  if (currentInject && currentInject.injectProperties) {
+    // 编译属性注入
+    options.properties = Object.assign({}, currentInject.injectProperties, options.properties)
+  }
   if (currentInject && currentInject.injectComputed) {
     // 编译计算属性注入
-    options.computed = Object.assign({}, options.computed, currentInject.injectComputed)
+    options.computed = Object.assign({}, currentInject.injectComputed, options.computed)
+  }
+  if (currentInject && currentInject.injectMethods) {
+    // 编译methods注入
+    options.methods = Object.assign({}, currentInject.injectMethods, options.methods)
   }
   if (currentInject && currentInject.injectOptions) {
-    // 编译option注入,优先微信中的单独配置
+    // 编译options注入,优先微信中的单独配置
     options.options = Object.assign({}, currentInject.injectOptions, options.options)
+  }
+  if (currentInject && currentInject.pageEvents) {
+    options.mixins = options.mixins || []
+    // 驱动层视作用户本地逻辑，作为最后的mixin来执行
+    options.mixins.push(currentInject.pageEvents)
   }
   // 转换mode
   options.mpxConvertMode = options.mpxConvertMode || getConvertMode(global.currentSrcMode)
-  const rawOptions = mergeOptions(options, type)
+  const rawOptions = mergeOptions(options, type, needConvert)
 
   if (currentInject && currentInject.propKeys) {
     const computedKeys = Object.keys(rawOptions.computed || {})

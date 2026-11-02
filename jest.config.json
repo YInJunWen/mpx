@@ -1,9 +1,6 @@
 {
-  "transform": {
-    "^.+\\.(js|jsx)?$": "babel-jest"
-  },
-  "moduleNameMapper": {
-    "\\.(css|styl)$": "identity-obj-proxy"
-  },
-  "testEnvironment": "jsdom"
+  "projects": [
+    "<rootDir>/packages/*/jest.config.json"
+  ],
+  "testTimeout": 10000
 }

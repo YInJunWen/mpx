@@ -5,10 +5,23 @@ module.exports = function ({ print }) {
   const baiduPropLog = print({ platform: 'baidu', tag: TAG_NAME, isError: false })
   const ttPropLog = print({ platform: 'bytedance', tag: TAG_NAME, isError: false })
   const jdPropLog = print({ platform: 'jd', tag: TAG_NAME, isError: false })
+  const ksPropLog = print({ platform: 'ks', tag: TAG_NAME, isError: false })
 
   return {
     test: TAG_NAME,
     web (tag, { el }) {
+      el.isBuiltIn = true
+      return 'mpx-rich-text'
+    },
+    ios (tag, { el }) {
+      el.isBuiltIn = true
+      return 'mpx-rich-text'
+    },
+    android (tag, { el }) {
+      el.isBuiltIn = true
+      return 'mpx-rich-text'
+    },
+    harmony (tag, { el }) {
       el.isBuiltIn = true
       return 'mpx-rich-text'
     },
@@ -23,6 +36,10 @@ module.exports = function ({ print }) {
       {
         test: /^(nodes)$/,
         jd: jdPropLog
+      },
+      {
+        test: /^(user-select)$/,
+        ks: ksPropLog
       }
     ]
   }

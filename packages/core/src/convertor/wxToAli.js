@@ -1,22 +1,22 @@
-import * as wxLifecycle from '../platform/patch/wx/lifecycle'
-import * as aliLifecycle from '../platform/patch/ali/lifecycle'
+import * as wxLifecycle from '../platform/patch/lifecycle/index.wx'
+import { LIFECYCLE } from '../platform/patch/lifecycle/index'
 import { mergeLifecycle } from './mergeLifecycle'
-import { mergeToArray } from '../core/mergeOptions'
-import { error } from '../helper/log'
+import { error, hasOwn } from '@mpxjs/utils'
 import { implemented } from '../core/implement'
-import { hasOwn } from '../helper/utils'
+
+const isDev = process.env.NODE_ENV !== 'production'
 
 const unsupported = ['moved', 'definitionFilter']
 
 function convertErrorDesc (key) {
-  error(`Options.${key} is not supported in runtime conversion from wx to ali.`, global.currentResource)
+  error(`Options.${key} is not supported in runtime conversion from wx to ali.`, global.currentResource || global.currentModuleId)
 }
 
 function notSupportTip (options) {
   unsupported.forEach(key => {
     if (options[key]) {
       if (!implemented[key]) {
-        process.env.NODE_ENV !== 'production' && convertErrorDesc(key)
+        isDev && convertErrorDesc(key)
         delete options[key]
       } else if (implemented[key].remove) {
         delete options[key]
@@ -24,7 +24,7 @@ function notSupportTip (options) {
     }
   })
   // relations部分支持
-  const relations = options['relations']
+  const relations = options.relations
   if (relations) {
     Object.keys(relations).forEach(path => {
       const item = relations[path]
@@ -40,7 +40,7 @@ function notSupportTip (options) {
 
 export default {
   lifecycle: mergeLifecycle(wxLifecycle.LIFECYCLE),
-  lifecycle2: mergeLifecycle(aliLifecycle.LIFECYCLE),
+  lifecycle2: mergeLifecycle(LIFECYCLE),
   pageMode: 'blend',
   support: false,
   lifecycleProxyMap: wxLifecycle.lifecycleProxyMap,
@@ -60,14 +60,6 @@ export default {
       })
       options.props = props
       delete options.properties
-    }
-    if (options.onResize) {
-      mergeToArray(options, {
-        events: {
-          onResize: options.onResize
-        }
-      }, 'events')
-      delete options.onResize
     }
     notSupportTip(options)
   }

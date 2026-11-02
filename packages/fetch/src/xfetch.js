@@ -3,26 +3,31 @@ import CancelToken from './cancelToken'
 import InterceptorManager from './interceptorManager'
 import RequestQueue from './queue'
 import { requestProxy } from './proxy'
-import { isNotEmptyArray, isNotEmptyObject, transformReq } from './util'
+import { Validator } from './validator'
+import { isNotEmptyArray, isNotEmptyObject, transformReq, isObject, formatCacheKey, checkCacheConfig, isArray, isString, extend } from './util'
 
 export default class XFetch {
   constructor (options, MPX) {
     this.CancelToken = CancelToken
+    this.cacheRequestData = {}
     // this.requestAdapter = (config) => requestAdapter(config, MPX)
     // 当存在 useQueue 配置时，才使用 this.queue 变量
     if (options && options.useQueue && typeof options.useQueue === 'object') {
-      this.queue = new RequestQueue({
-        adapter: (config) => requestAdapter(config, MPX),
-        ...options.useQueue
-      })
+      this.queue = new RequestQueue(extend({
+        adapter: (config) => requestAdapter(config, MPX)
+      }, options.useQueue))
     } else {
       this.requestAdapter = (config) => requestAdapter(config, MPX)
     }
     if (options && options.proxy) this.setProxy(options.proxy)
+    this.onValidatorError = options?.onValidatorError || (error => {
+      console.error(error)
+    })
     this.interceptors = {
       request: new InterceptorManager(),
       response: new InterceptorManager()
     }
+    this.useBigInt = (options && options.useBigInt) || false
   }
 
   static normalizeConfig (config) {
@@ -52,13 +57,21 @@ export default class XFetch {
 
     if (/^POST|PUT$/i.test(config.method)) {
       const header = config.header || {}
-      let contentType = header['content-type'] || header['Content-Type']
+      const contentType = header['content-type'] || header['Content-Type']
       if (config.emulateJSON && !contentType) {
         header['content-type'] = 'application/x-www-form-urlencoded'
         config.header = header
       }
       delete config.emulateJSON
     }
+
+    if (!isObject(config.usePre)) {
+      config.usePre = {
+        enable: !!config.usePre
+      }
+    }
+    config.usePre.cacheInvalidationTime = config.usePre.cacheInvalidationTime || 3000 // 默认值3000
+    config.usePre.ignorePreParamKeys = config.usePre.ignorePreParamKeys || [] // 默认空数组
   }
 
   create (options) {
@@ -91,6 +104,42 @@ export default class XFetch {
     this.proxyOptions = undefined
   }
 
+  setValidator (options) {
+    // 添加校验配置
+    if (isNotEmptyObject(options)) {
+      const preValidatorOptions = this.validatorOptions || {}
+      this.validatorOptions = options || {}
+      Object.keys(this.validatorOptions).forEach(key => {
+        const preOption = preValidatorOptions[key]
+        const option = this.validatorOptions[key]
+        const objectRule = key === 'rules' && isNotEmptyObject(option)
+        const stringRule = (key === 'exclude' || key === 'include') && isString(option)
+        const isEnv = key === 'env'
+        if (isNotEmptyArray(option)) {
+          this.validatorOptions[key] = isArray(preOption) ? preOption.concat(option) : option
+        } else if (objectRule || stringRule) {
+          this.validatorOptions[key] = isArray(preOption) ? preOption.concat([option]) : [option]
+        } else if (isEnv) {
+          this.validatorOptions[key] = isObject(preOption) ? Object.assign({}, preOption, option) : option
+        } else {
+          console.error('rules仅支持不为空的数组或对象, include和exclude仅支持不为空的字符串或对象')
+        }
+      })
+    }
+  }
+
+  getValidator () {
+    // 返回校验配置
+    return this.validatorOptions
+  }
+
+  // 校验参数规则
+  checkValidator (config) {
+    const env = Object.assign({}, this.validatorOptions?.env, config?.validate?.env)
+    const options = Object.assign({}, this.validatorOptions, config.validate, { env: env })
+    return Validator(options, config)
+  }
+
   // 向前追加代理规则
   prependProxy (proxyRules) {
     if (isNotEmptyArray(proxyRules)) {
@@ -117,8 +166,42 @@ export default class XFetch {
     return requestProxy(this.proxyOptions, config)
   }
 
+  checkPreCache (config) {
+    // 未设置预请求 则直接 return
+    if (!config.usePre.enable) return false
+    const cacheKey = formatCacheKey(config.url)
+    const cacheRequestData = this.cacheRequestData[cacheKey]
+    if (cacheRequestData && config.usePre.mode !== 'producer') {
+      delete this.cacheRequestData[cacheKey]
+      // 缓存是否过期：大于cacheInvalidationTime（默认为3s）则算过期
+      const isNotExpired = Date.now() - cacheRequestData.lastTime <= config.usePre.cacheInvalidationTime
+      if (isNotExpired && cacheRequestData.responsePromise && checkCacheConfig(config, cacheRequestData)) {
+        return cacheRequestData.responsePromise.then(response => {
+          // 添加 isCache 标识该请求来源于缓存
+          return extend({ isCache: true }, response)
+        })
+      }
+    }
+    if (config.usePre.mode !== 'consumer') {
+      const { params, data, method } = config
+      this.cacheRequestData[cacheKey] = {
+        cacheKey,
+        params,
+        data,
+        method,
+        lastTime: Date.now(),
+        responsePromise: null
+      }
+    }
+    return false
+  }
+
+  isCancel (value) {
+    return !!(value && value.__CANCEL__)
+  }
+
   fetch (config, priority) {
-    config.timeout = config.timeout || global.__networkTimeout
+    // 检查缓存
     // middleware chain
     const chain = []
     let promise = Promise.resolve(config)
@@ -129,13 +212,63 @@ export default class XFetch {
       // 1. 检查config.url存在
       // 2. 抹平微信/支付宝header/headers字段差异
       // 3. 填充默认method为GET, method大写化
-      // 4. 抽取url中query合并至config.params
-      // 5. 对于类GET请求将config.data移动合并至config.params(最终发送请求前进行统一序列化并拼接至config.url上)
-      // 6. 对于类POST请求将config.emulateJSON实现为config.header['content-type'] = 'application/x-www-form-urlencoded'
+      // 4. 对于类GET请求将config.data移动合并至config.params(最终发送请求前进行统一序列化并拼接至config.url上)
+      // 5. 对于类POST请求将config.emulateJSON实现为config.header['content-type'] = 'application/x-www-form-urlencoded'
       // 后续请求处理都应基于正规化后的config进行处理(proxy/mock/validate/serialize)
       XFetch.normalizeConfig(config)
+
+      // 检查缓存
+      const responsePromise = this.checkPreCache(config)
+      if (responsePromise && typeof config.usePre.onUpdate !== 'function') {
+        return responsePromise
+      }
+
+      try {
+        const checkRes = this.checkValidator(config)
+        const isWrong = (typeof checkRes === 'boolean' && !checkRes) || (isObject(checkRes) && !checkRes.valid)
+        if (isWrong) {
+          this.onValidatorError(`xfetch参数校验错误 ${checkRes.url} ${checkRes?.errorResult ? 'error:' + checkRes.errorResult : ''} ${checkRes?.warningResult ? 'warning:' + checkRes?.warningResult : ''}`)
+        }
+      } catch (e) {
+        console.log('xfetch参数校验错误', e)
+      }
       config = this.checkProxy(config) // proxy
-      return this.queue ? this.queue.request(config, priority) : this.requestAdapter(config)
+
+      if (this.useBigInt) {
+        config.useBigInt = this.useBigInt
+      }
+
+      let promise = this.queue ? this.queue.request(config, priority) : this.requestAdapter(config)
+      // 后置拦截器
+      const chain = []
+      this.interceptors.response.forEach(function pushResponseInterceptors (interceptor) {
+        chain.push(interceptor.fulfilled, interceptor.rejected)
+      })
+      while (chain.length) {
+        promise = promise.then(chain.shift(), chain.shift())
+      }
+
+      // onlyConsumer=true是一种只消费缓存数据的模式，此模式下不会产生缓存数据
+      if (config.usePre.enable && config.usePre.mode !== 'consumer') {
+        const cacheKey = formatCacheKey(config.url)
+        this.cacheRequestData[cacheKey] && (this.cacheRequestData[cacheKey].responsePromise = promise)
+      }
+
+      // 如果命中缓存，则将缓存 responsePromise 与最新 promise 竞速，返回最快的 promise
+      if (responsePromise && typeof config.usePre.onUpdate === 'function') {
+        const returnPromise = Promise.any([responsePromise, promise])
+        returnPromise.then(response => {
+          if (response.isCache) { // 如果预请求先返回，则等待实际请求返回后回调 usePre.onUpdate
+            promise.then(response => {
+              // 回调 usePre.onUpdate
+              config.usePre.onUpdate(response)
+            }, () => {})
+          }
+        }, () => {})
+        return returnPromise
+      }
+
+      return promise
     }
 
     this.interceptors.request.forEach(function unshiftRequestInterceptors (interceptor) {
@@ -143,10 +276,6 @@ export default class XFetch {
     })
 
     chain.push(request, undefined)
-
-    this.interceptors.response.forEach(function pushResponseInterceptors (interceptor) {
-      chain.push(interceptor.fulfilled, interceptor.rejected)
-    })
 
     while (chain.length) {
       promise = promise.then(chain.shift(), chain.shift())

@@ -1,22 +1,39 @@
-import * as wxLifecycle from '../platform/patch/wx/lifecycle'
-import * as webLifecycle from '../platform/patch/web/lifecycle'
+import * as wxLifecycle from '../platform/patch/lifecycle/index.wx'
+import { LIFECYCLE } from '../platform/patch/lifecycle/index'
 import { mergeLifecycle } from './mergeLifecycle'
-import { error } from '../helper/log'
-import { isObject, diffAndCloneA, hasOwn } from '../helper/utils'
+import {
+  isObject,
+  diffAndCloneA,
+  error,
+  hasOwn,
+  getDefaultValueByType
+} from '@mpxjs/utils'
 import { implemented } from '../core/implement'
 
+const isDev = process.env.NODE_ENV !== 'production'
+
 // 暂不支持的wx选项，后期需要各种花式支持
-const unsupported = ['moved', 'definitionFilter', 'onShareAppMessage', 'pageShow', 'pageHide']
+const unsupported = [
+  'moved',
+  'error',
+  'definitionFilter',
+  'export',
+  'onShareAppMessage',
+  'onShareTimeline',
+  'onAddToFavorites',
+  'onSaveExitState',
+  'onRouteDone'
+]
 
 function convertErrorDesc (key) {
-  error(`Options.${key} is not supported in runtime conversion from wx to web.`, global.currentResource)
+  error(`Options.${key} is not supported in runtime conversion from wx to web.`, global.currentResource || global.currentModuleId)
 }
 
-function notSupportTip (options) {
-  unsupported.forEach(key => {
+export function notSupportTip (options, keys = unsupported) {
+  keys.forEach(key => {
     if (options[key]) {
       if (!implemented[key]) {
-        process.env.NODE_ENV !== 'production' && convertErrorDesc(key)
+        isDev && convertErrorDesc(key)
         delete options[key]
       } else if (implemented[key].remove) {
         delete options[key]
@@ -27,7 +44,7 @@ function notSupportTip (options) {
 
 export default {
   lifecycle: mergeLifecycle(wxLifecycle.LIFECYCLE),
-  lifecycle2: mergeLifecycle(webLifecycle.LIFECYCLE),
+  lifecycle2: mergeLifecycle(LIFECYCLE),
   pageMode: 'blend',
   support: true,
   lifecycleProxyMap: wxLifecycle.lifecycleProxyMap,
@@ -46,9 +63,17 @@ export default {
             }
             if (hasOwn(prop, 'value')) {
               // vue中对于引用类型数据需要使用函数返回
-              newProp.default = isObject(prop.value) ? function propFn () {
-                return diffAndCloneA(prop.value).clone
-              } : prop.value
+              newProp.default = isObject(prop.value)
+                ? function propFn () {
+                  return diffAndCloneA(prop.value).clone
+                }
+                : prop.value
+            } else {
+              // 没有显式设置value时，根据type自动添加默认值，与微信小程序原生行为保持一致
+              const defaultValue = getDefaultValueByType(prop.type, 'web')
+              if (defaultValue !== undefined) {
+                newProp.default = defaultValue
+              }
             }
             props[key] = newProp
           } else {

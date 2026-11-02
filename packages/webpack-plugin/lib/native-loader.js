@@ -1,54 +1,47 @@
 const path = require('path')
-const JSON5 = require('json5')
 const parseRequest = require('./utils/parse-request')
-const loaderUtils = require('loader-utils')
 const config = require('./config')
 const createHelpers = require('./helpers')
-const InjectDependency = require('./dependency/InjectDependency')
-const addQuery = require('./utils/add-query')
-const mpxJSON = require('./utils/mpx-json')
 const async = require('async')
-const matchCondition = require('./utils/match-condition')
-const fixUsingComponent = require('./utils/fix-using-component')
-const getMainCompilation = require('./utils/get-main-compilation')
+const { matchCondition } = require('./utils/match-condition')
+const { JSON_JS_EXT } = require('./utils/const')
+const getEntryName = require('./utils/get-entry-name')
+const AppEntryDependency = require('./dependencies/AppEntryDependency')
+const RecordResourceMapDependency = require('./dependencies/RecordResourceMapDependency')
+const RecordModuleIdMapDependency = require('./dependencies/RecordModuleIdMapDependency')
+const preProcessJson = require('./utils/pre-process-json')
 
+// todo native-loader考虑与mpx-loader或加强复用，原生组件约等于4个区块都为src的.mpx文件
 module.exports = function (content) {
   this.cacheable()
 
-  const mainCompilation = getMainCompilation(this._compilation)
-  const mpx = mainCompilation.__mpx__
+  const mpx = this.getMpx()
   if (!mpx) {
     return content
   }
 
   const nativeCallback = this.async()
-
   const loaderContext = this
   const isProduction = this.minimize || process.env.NODE_ENV === 'production'
-  const options = Object.assign({}, mpx.loaderOptions, loaderUtils.getOptions(this))
-
   const filePath = this.resourcePath
+  const moduleId = mpx.getModuleId(filePath, false, this)
+  this._module.addPresentationalDependency(new RecordModuleIdMapDependency(moduleId, filePath))
 
-  const moduleId = 'm' + mpx.pathHash(filePath)
   const { resourcePath, queryObj } = parseRequest(this.resource)
-  const projectRoot = mpx.projectRoot
+  const packageRoot = queryObj.packageRoot || mpx.currentPackageRoot
   const mode = mpx.mode
-  const defs = mpx.defs
   const globalSrcMode = mpx.srcMode
-  const localSrcMode = queryObj.mode
+  const localSrcMode = queryObj.srcMode
   const packageName = queryObj.packageRoot || mpx.currentPackageRoot || 'main'
   const pagesMap = mpx.pagesMap
   const componentsMap = mpx.componentsMap[packageName]
   const parsed = path.parse(resourcePath)
   const resourceName = path.join(parsed.dir, parsed.name)
-  const isApp = !pagesMap[resourcePath] && !componentsMap[resourcePath]
   const srcMode = localSrcMode || globalSrcMode
-  const fs = this._compiler.inputFileSystem
   const typeExtMap = config[srcMode].typeExtMap
   const typeResourceMap = {}
   const autoScope = matchCondition(resourcePath, mpx.autoScopeRules)
 
-  const EXT_MPX_JSON = '.json.js'
   const CSS_LANG_EXT_MAP = {
     less: '.less',
     stylus: '.styl',
@@ -56,40 +49,20 @@ module.exports = function (content) {
     scss: '.scss'
   }
 
-  let useMPXJSON = false
+  const TS_EXT = '.ts'
+
+  let useJSONJS = false
   let cssLang = ''
   const hasScoped = (queryObj.scoped || autoScope) && mode === 'ali'
   const hasComment = false
   const isNative = true
 
-  const tryEvalMPXJSON = (callback) => {
-    const { rawResourcePath } = parseRequest(typeResourceMap['json'])
-    const _src = rawResourcePath
-    this.addDependency(_src)
-    fs.readFile(_src, (err, raw) => {
-      if (err) {
-        callback(err)
-      } else {
-        try {
-          const source = raw.toString('utf-8')
-          const text = mpxJSON.compileMPXJSONText({ source, defs, filePath: _src })
-          callback(null, text)
-        } catch (e) {
-          callback(e)
-        }
-      }
-    })
-  }
-
   const checkFileExists = (extName, callback) => {
-    this.resolve(parsed.dir, resourceName + extName, (err, result) => {
-      err = null
-      callback(err, result)
-    })
+    this.resolve(parsed.dir, resourceName + extName, callback)
   }
 
-  function checkCSSLangFiles (callback) {
-    const langs = mpx.nativeOptions.cssLangs || ['less', 'stylus', 'scss', 'sass']
+  function checkCSSLangFile (callback) {
+    const langs = mpx.nativeConfig.cssLangs || ['less', 'stylus', 'scss', 'sass']
     const results = []
     async.eachOf(langs, function (lang, i, callback) {
       if (!CSS_LANG_EXT_MAP[lang]) {
@@ -99,7 +72,7 @@ module.exports = function (content) {
         if (!err && result) {
           results[i] = result
         }
-        callback(err)
+        callback()
       })
     }, function (err) {
       for (let i = 0; i < langs.length; i++) {
@@ -113,154 +86,166 @@ module.exports = function (content) {
     })
   }
 
-  function checkMPXJSONFile (callback) {
-    // checkFileExists(EXT_MPX_JSON, (err, result) => {
-    checkFileExists(EXT_MPX_JSON, (err, result) => {
+  function checkJSONJSFile (callback) {
+    checkFileExists(JSON_JS_EXT, (err, result) => {
       if (!err && result) {
         typeResourceMap.json = result
-        useMPXJSON = true
+        useJSONJS = true
       }
-      callback(err)
+      callback()
     })
   }
 
+  function checkTSFile (callback) {
+    checkFileExists(TS_EXT, (err, result) => {
+      if (!err && result) {
+        typeResourceMap.script = result
+      }
+      callback()
+    })
+  }
+
+  const emitWarning = (msg, loc) => {
+    this.emitWarning(
+      new Error('[Mpx json warning][native-loader][' + (loc || this.resourcePath) + ']: ' + msg)
+    )
+  }
+
+  const emitError = (msg, loc) => {
+    this.emitError(
+      new Error('[Mpx json error][native-loader][' + (loc || this.resourcePath) + ']: ' + msg)
+    )
+  }
+  let ctorType = pagesMap[resourcePath]
+    ? 'page'
+    : componentsMap[resourcePath]
+      ? 'component'
+      : 'app'
+  // 处理构造器类型
+  const ctor = ctorType === 'page'
+    ? (mpx.forceUsePageCtor || mode === 'ali') ? 'Page' : 'Component'
+    : ctorType === 'component'
+      ? 'Component'
+      : 'App'
+
+  // 支持资源query传入isPage或isComponent支持页面/组件单独编译
+  if (ctorType === 'app' && (queryObj.isComponent || queryObj.isPage)) {
+    const entryName = getEntryName(this) || mpx.getOutputPath(resourcePath, queryObj.isComponent ? 'component' : 'page')
+    ctorType = queryObj.isComponent ? 'component' : 'page'
+    this._module.addPresentationalDependency(new RecordResourceMapDependency(resourcePath, ctorType, entryName, packageRoot))
+  }
+
+  if (ctorType === 'app') {
+    const appName = getEntryName(this)
+    if (appName) this._module.addPresentationalDependency(new AppEntryDependency(resourcePath, appName))
+  }
   // 先读取json获取usingComponents信息
   async.waterfall([
     (callback) => {
       async.parallel([
-        checkCSSLangFiles,
-        checkMPXJSONFile
+        checkCSSLangFile,
+        checkJSONJSFile,
+        checkTSFile
       ], (err) => {
         callback(err)
       })
     },
     (callback) => {
       async.forEachOf(typeExtMap, (ext, key, callback) => {
-        // 检测到mpxJson或cssLang时跳过对应类型文件检测
-        if ((key === 'json' && useMPXJSON) || (key === 'styles' && cssLang)) {
+        // 对应资源存在预处理类型文件时跳过对应的标准文件检测
+        if (typeResourceMap[key]) {
           return callback()
         }
         checkFileExists(ext, (err, result) => {
           if (!err && result) {
             typeResourceMap[key] = result
           }
-          callback(err)
+          callback()
         })
       }, callback)
     },
     (callback) => {
-      // 对原生写法增强json写法，可以用js来写json，尝试找.json.js文件，找不到用回json的内容
-      if (useMPXJSON) {
-        tryEvalMPXJSON(callback)
-      } else {
-        if (typeResourceMap['json']) {
-          // eslint-disable-next-line handle-callback-err
-          const { rawResourcePath } = parseRequest(typeResourceMap['json'])
-          fs.readFile(rawResourcePath, (err, raw) => {
-            if (err) {
-              callback(err)
-            } else {
-              callback(null, raw.toString('utf-8'))
-            }
-          })
-        } else {
-          callback(null, '{}')
-        }
-      }
-    }, (content, callback) => {
-      let usingComponents = [].concat(Object.keys(mpx.usingComponents))
-      try {
-        let ret = JSON5.parse(content)
-        if (ret.usingComponents) {
-          fixUsingComponent(ret.usingComponents, mode)
-          usingComponents = usingComponents.concat(Object.keys(ret.usingComponents))
-        }
-      } catch (e) {
-      }
-      const {
-        getRequireForSrc,
-        getNamedExportsForSrc
-      } = createHelpers({
-        loaderContext,
-        options,
-        moduleId,
-        hasScoped,
-        hasComment,
-        usingComponents,
+      preProcessJson({
+        json: {
+          src: typeResourceMap.json,
+          useJSONJS
+        },
         srcMode,
-        isNative,
-        projectRoot
+        emitWarning,
+        emitError,
+        ctorType,
+        resourcePath,
+        loaderContext
+      }, (err, jsonInfo) => {
+        if (err) return callback(err)
+        callback(null, jsonInfo)
       })
+    },
+    (jsonInfo, callback) => {
+      const {
+        componentPlaceholder,
+        componentGenerics,
+        usingComponentsInfo
+      } = jsonInfo
 
-      const getRequire = (type) => {
-        const localQuery = Object.assign({}, queryObj)
-        let src = typeResourceMap[type]
-        localQuery.resourcePath = resourcePath
-        if (type !== 'script') {
-          this.addDependency(src)
-        }
-        if (type === 'template' && isApp) {
-          return ''
-        }
-        if (type === 'json' && !useMPXJSON) {
-          localQuery.__component = true
-        }
-        src = addQuery(src, localQuery, true)
-        const partsOpts = { src }
+      const {
+        getRequire
+      } = createHelpers(loaderContext)
 
-        if (type === 'script') {
-          return getNamedExportsForSrc(type, partsOpts)
+      const getRequireByType = (type) => {
+        const src = typeResourceMap[type]
+        const part = { src }
+        const extraOptions = {
+          ...queryObj,
+          resourcePath
         }
-        if (type === 'styles') {
-          if (cssLang) {
-            partsOpts.lang = cssLang
-          }
-          if (hasScoped) {
-            return getRequireForSrc(type, partsOpts, 0, true)
-          }
+
+        switch (type) {
+          case 'template':
+            if (ctorType === 'app') return ''
+            Object.assign(extraOptions, {
+              hasScoped,
+              hasComment,
+              isNative,
+              ctorType,
+              moduleId,
+              componentGenerics,
+              componentPlaceholder,
+              usingComponentsInfo: JSON.stringify(usingComponentsInfo)
+            })
+            break
+          case 'styles':
+            if (cssLang) part.lang = cssLang
+            Object.assign(extraOptions, {
+              moduleId,
+              scoped: hasScoped
+            })
+            break
+          case 'json':
+            if (useJSONJS) part.useJSONJS = true
+            break
         }
-        return getRequireForSrc(type, partsOpts)
+        return getRequire(type, part, extraOptions)
       }
 
       // 注入模块id及资源路径
-      let globalInjectCode = `global.currentModuleId = ${JSON.stringify(moduleId)}\n`
+      let output = `global.currentModuleId = ${JSON.stringify(moduleId)}\n`
       if (!isProduction) {
-        globalInjectCode += `global.currentResource = ${JSON.stringify(filePath)}\n`
+        output += `global.currentResource = ${JSON.stringify(filePath)}\n`
       }
 
-      // 注入构造函数
-      let ctor = 'App'
-      if (pagesMap[resourcePath]) {
-        if (mpx.forceUsePageCtor || mode === 'ali') {
-          ctor = 'Page'
-        } else {
-          ctor = 'Component'
-        }
-      } else if (componentsMap[resourcePath]) {
-        ctor = 'Component'
-      }
-      globalInjectCode += `global.currentCtor = ${ctor}\n`
-      globalInjectCode += `global.currentCtorType = ${JSON.stringify(ctor.replace(/^./, (match) => {
+      output += `global.currentCtor = ${ctor}\n`
+      output += `global.currentCtorType = ${JSON.stringify(ctor.replace(/^./, (match) => {
         return match.toLowerCase()
       }))}\n`
+      output += `global.currentResourceType = ${JSON.stringify(ctorType)}\n`
 
       if (srcMode) {
-        globalInjectCode += `global.currentSrcMode = ${JSON.stringify(srcMode)}\n`
+        output += `global.currentSrcMode = ${JSON.stringify(srcMode)}\n`
       }
 
-      if (!mpx.forceDisableInject) {
-        const dep = new InjectDependency({
-          content: globalInjectCode,
-          index: -3
-        })
-        this._module.addDependency(dep)
-      }
-
-      // 触发webpack global var 注入
-      let output = 'global.currentModuleId;\n'
-
-      for (let type in typeResourceMap) {
-        output += `/* ${type} */\n${getRequire(type)}\n\n`
+      for (const type in typeResourceMap) {
+        output += `/* ${type} */\n${getRequireByType(type)}\n\n`
       }
 
       callback(null, output)

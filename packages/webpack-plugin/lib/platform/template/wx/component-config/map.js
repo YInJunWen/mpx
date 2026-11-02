@@ -3,7 +3,7 @@ const TAG_NAME = 'map'
 module.exports = function ({ print }) {
   const aliPropLog = print({ platform: 'ali', tag: TAG_NAME, isError: false })
   const aliEventLogError = print({ platform: 'ali', tag: TAG_NAME, isError: true, type: 'event' })
-  const aliPropValueWarningLog = print({ platform: 'ali', tag: TAG_NAME, isError: true, type: 'value-attr-uniform' })
+  const aliPropValueWarningLog = print({ platform: 'ali', tag: TAG_NAME, isError: false, type: 'value-attr-uniform' })
   const baiduPropLog = print({ platform: 'baidu', tag: TAG_NAME, isError: false })
   const baiduEventLogError = print({ platform: 'baidu', tag: TAG_NAME, isError: true, type: 'event' })
   const jdPropLog = print({ platform: 'jd', tag: TAG_NAME, isError: false })
@@ -12,6 +12,9 @@ module.exports = function ({ print }) {
   const ttPropLog = print({ platform: 'bytedance', tag: TAG_NAME, isError: false })
   const qaPropLog = print({ platform: 'qa', tag: TAG_NAME, isError: false })
   const qaEventLogError = print({ platform: 'qa', tag: TAG_NAME, isError: true, type: 'event' })
+  const ksPropLog = print({ platform: 'ks', tag: TAG_NAME, isError: false })
+  const ksEventLogError = print({ platform: 'ks', tag: TAG_NAME, isError: true, type: 'event' })
+
   return {
     // 匹配标签名，可传递正则
     test: TAG_NAME,
@@ -55,6 +58,10 @@ module.exports = function ({ print }) {
       {
         test: /^(min-scale|max-scale|covers|polyline|include-points|show-location|subkey|layer-style|skew|enable-3D|show-compass|show-scale|enable-overlooking|enable-zoom|enable-scroll|enable-rotate|enable-satellite|enable-traffic|enable-poi|enable-building|setting)$/,
         qa: qaPropLog
+      },
+      {
+        test: /^(min-scale|max-scale|covers|polyline|controls|include-points|show-location|polygons|subkey|layer-style|skew|enable-3D|show-compass|show-scale|enable-overlooking|enable-auto-max-overlooking|enable-zoom|enable-scroll|enable-rotate|enable-satellite|enable-traffic|enable-poi|enable-building|setting)$/,
+        ks: ksPropLog
       }
     ],
     // 组件事件中的差异部分
@@ -65,11 +72,11 @@ module.exports = function ({ print }) {
         test: /^(tap|markertap|callouttap|controltap|regionchange|)$/,
         ali (eventName) {
           const eventMap = {
-            'tap': 'tap',
-            'markertap': 'markerTap',
-            'callouttap': 'calloutTap',
-            'controltap': 'controlTap',
-            'regionchange': 'regionChange'
+            tap: 'tap',
+            markertap: 'markerTap',
+            callouttap: 'calloutTap',
+            controltap: 'controlTap',
+            regionchange: 'regionChange'
           }
           return eventMap[eventName]
         }
@@ -93,6 +100,10 @@ module.exports = function ({ print }) {
       {
         test: /^(labeltap|anchorpointtap)$/,
         qa: qaEventLogError
+      },
+      {
+        test: /^(updated|regionchange|poitap|polylinetap|abilitysuccess|abilityfail|authsuccess|interpolatepoint|error)$/,
+        ks: ksEventLogError
       }
     ]
   }

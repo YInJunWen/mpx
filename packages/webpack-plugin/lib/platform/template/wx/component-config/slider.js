@@ -8,6 +8,18 @@ module.exports = function ({ print }) {
       el.isBuiltIn = true
       return 'mpx-slider'
     },
+    android (tag, { el }) {
+      el.isBuiltIn = true
+      return 'mpx-slider'
+    },
+    harmony (tag, { el }) {
+      el.isBuiltIn = true
+      return 'mpx-slider'
+    },
+    ios (tag, { el }) {
+      el.isBuiltIn = true
+      return 'mpx-slider'
+    },
     props: [
       {
         test: /^color$/,
@@ -17,10 +29,10 @@ module.exports = function ({ print }) {
         test: /^(color|selected-color|activeColor|backgroundColor|block-size|block-color)$/,
         ali (obj) {
           const propsMap = {
-            'color': 'background-color',
+            color: 'background-color',
             'selected-color': 'active-color',
-            'activeColor': 'active-color',
-            'backgroundColor': 'background-color',
+            activeColor: 'active-color',
+            backgroundColor: 'background-color',
             'block-size': 'handle-size',
             'block-color': 'handle-color'
           }
@@ -32,7 +44,7 @@ module.exports = function ({ print }) {
         test: /^(color|selected-color)$/,
         swan (obj) {
           const propsMap = {
-            'color': 'backgroundColor',
+            color: 'backgroundColor',
             'selected-color': 'activeColor'
           }
           obj.name = propsMap[obj.name]
@@ -43,8 +55,16 @@ module.exports = function ({ print }) {
         test: /^(activeColor|backgroundColor)$/,
         tt (obj) {
           const propsMap = {
-            'activeColor': 'active-color',
-            'backgroundColor': 'background-color'
+            activeColor: 'active-color',
+            backgroundColor: 'background-color'
+          }
+          obj.name = propsMap[obj.name]
+          return obj
+        },
+        ks (obj) {
+          const propsMap = {
+            activeColor: 'active-color',
+            backgroundColor: 'background-color'
           }
           obj.name = propsMap[obj.name]
           return obj

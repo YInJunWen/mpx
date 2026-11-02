@@ -1,15 +1,13 @@
 module.exports = {
   root: true,
-  parser: 'babel-eslint',
+  parser: '@babel/eslint-parser',
   parserOptions: {
     sourceType: 'module'
   },
   extends: 'standard',
-  plugins: [
-    'html',
-    'jest'
-  ],
+  plugins: ['html', 'jest'],
   globals: {
+    mpxGlobal: 'readonly',
     wx: 'readonly',
     my: 'readonly',
     swan: 'readonly',
@@ -18,19 +16,58 @@ module.exports = {
     jd: 'readonly',
     qa: 'readonly',
     dd: 'readonly',
+    ks: 'readonly',
     Component: 'readonly',
     Page: 'readonly',
     App: 'readonly',
+    Mixin: 'readonly',
     __mpx_mode__: 'readonly',
     __mpx_env__: 'readonly',
+    __mpx_dynamic_runtime__: 'readonly',
+    __mpx_perf__: 'readonly',
+    __mpx_perf_framework__: 'readonly',
+    __mpx_perf_user__: 'readonly',
     getRegExp: 'readonly',
     getCurrentPages: 'readonly'
   },
   rules: {
     'no-cond-assign': 0,
-    'camelcase': ['error', { 'allow': ['__mpx_mode__', '__mpx_env__', '__swan_exports_map__'] }]
+    camelcase: 0,
+    indent: 0,
+    'symbol-description': 0,
+    'node/no-callback-literal': 0,
+    'space-before-function-paren': 0
   },
   env: {
-    'jest/globals': true
-  }
+    'jest/globals': true,
+    browser: true
+  },
+  overrides: [
+    {
+      files: ['**/*.tsx', '**/*.ts', '**/*.jsx'],
+      parser: '@typescript-eslint/parser',
+      extends: [
+        'standard',
+        'plugin:@typescript-eslint/eslint-recommended',
+        'plugin:@typescript-eslint/recommended'
+      ],
+      plugins: ['@typescript-eslint'],
+      rules: {
+        '@typescript-eslint/no-explicit-any': 0,
+        'no-use-before-define': 0,
+        '@typescript-eslint/triple-slash-reference': 0,
+        '@typescript-eslint/ban-types': 0,
+        '@typescript-eslint/no-empty-interface': 0,
+        '@typescript-eslint/no-unused-vars': 0,
+        '@typescript-eslint/no-non-null-assertion': 0,
+        camelcase: 0
+      }
+    }, {
+      files: ['packages/webpack-plugin/lib/runtime/components/react/**/*.{js,jsx,ts,tsx}'],
+      plugins: ['react-hooks'],
+      rules: {
+        'react-hooks/rules-of-hooks': 'error'
+      }
+    }
+  ]
 }

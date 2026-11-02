@@ -1,59 +1,68 @@
 const templateCompiler = require('../template-compiler/compiler')
 const genComponentTag = require('../utils/gen-component-tag')
 const addQuery = require('../utils/add-query')
-const path = require('path')
+const normalize = require('../utils/normalize')
 const parseRequest = require('../utils/parse-request')
-const getMainCompilation = require('../utils/get-main-compilation')
+const { matchCondition } = require('../utils/match-condition')
+const { getWxTemplateComponentName, serializeWxTemplateDefinition, buildWebTemplateImportMergeExpr } = require('./template-shared')
+const titleBarPath = normalize.lib('runtime/components/web/mpx-titlebar.vue')
 
-function calculateRootEleChild (arr) {
-  if (!arr) {
-    return 0
-  }
-  return arr.reduce((total, item) => {
-    if (item.type === 1) {
-      if (item.tag === 'template') {
-        total += calculateRootEleChild(item.children)
-      } else {
-        total += 1
-      }
-    }
-    return total
-  }, 0)
-}
-
-module.exports = function (template, options, callback) {
-  const mode = options.mode
-  const srcMode = options.srcMode
-  const defs = options.defs
-  const moduleId = options.moduleId
-  const loaderContext = options.loaderContext
-  const ctorType = options.ctorType
-  const resourcePath = parseRequest(loaderContext.resource).resourcePath
+module.exports = function (template, {
+  loaderContext,
+  hasScoped,
+  hasComment,
+  isNative,
+  srcMode,
+  moduleId,
+  ctorType,
+  usingComponentsInfo,
+  originalUsingComponents,
+  componentGenerics,
+  componentPlaceholder
+}, callback) {
+  const mpx = loaderContext.getMpx()
+  const {
+    projectRoot,
+    mode,
+    env,
+    defs,
+    wxsContentMap,
+    decodeHTMLText,
+    externalClasses,
+    webConfig,
+    autoVirtualHostRules,
+    forceProxyEventRules,
+    checkUsingComponentsRules,
+    globalComponents
+  } = mpx
+  const { resourcePath, rawResourcePath } = parseRequest(loaderContext.resource)
   const builtInComponentsMap = {}
-  const compilation = loaderContext._compilation
-  const mainCompilation = getMainCompilation(compilation)
-  const mpx = mainCompilation.__mpx__
-  const wxsContentMap = mpx.wxsContentMap
+
   let wxsModuleMap, genericsInfo
+  let wxTemplateComponentsInfo
   let output = '/* template */\n'
 
   if (ctorType === 'app') {
+    const { el, disablePageTransition = true } = webConfig
+    const idName = (el && el.match(/#(.*)/) && el.match(/#(.*)/)[1]) || 'app'
     template = {
       tag: 'template',
-      content: '<div class="app"><mpx-keep-alive><router-view class="page"></router-view></mpx-keep-alive></div>'
+      content: disablePageTransition
+        ? `<div id="${idName}"><mpx-keep-alive><router-view></router-view></mpx-keep-alive></div>`
+        : `<div id="${idName}"><transition :name="transitionName"><mpx-keep-alive><router-view></router-view></mpx-keep-alive></transition></div>`
     }
     builtInComponentsMap['mpx-keep-alive'] = {
-      resource: addQuery('@mpxjs/webpack-plugin/lib/runtime/components/web/mpx-keep-alive.vue', { component: true })
+      resource: addQuery('@mpxjs/webpack-plugin/lib/runtime/components/web/mpx-keep-alive.vue', { isComponent: true })
     }
   }
 
   if (template) {
     // 由于远端src template资源引用的相对路径可能发生变化，暂时不支持。
     if (template.src) {
-      return callback(new Error('[mpx loader][' + loaderContext.resource + ']: ' + 'template content must be inline in .mpx files!'))
+      return callback(new Error('[Mpx template error][' + loaderContext.resource + ']: ' + 'template content must be inline in .mpx files!'))
     }
     if (template.lang) {
-      return callback(new Error('[mpx loader][' + loaderContext.resource + ']: ' + 'template lang is not supported in trans web mode temporarily, we will support it in the future!'))
+      return callback(new Error('[Mpx template error][' + loaderContext.resource + ']: ' + 'template lang is not supported in trans web mode temporarily, we will support it in the future!'))
     }
 
     output += genComponentTag(template, (template) => {
@@ -61,73 +70,118 @@ module.exports = function (template, options, callback) {
         return template.content
       }
       if (template.content) {
-        const templateSrcMode = template.mode || srcMode
-        const parsed = templateCompiler.parse(template.content, {
-          warn: (msg) => {
-            loaderContext.emitWarning(
-              new Error('[template compiler][' + loaderContext.resource + ']: ' + msg)
-            )
-          },
-          error: (msg) => {
-            loaderContext.emitError(
-              new Error('[template compiler][' + loaderContext.resource + ']: ' + msg)
-            )
-          },
-          usingComponents: options.usingComponents,
-          hasComment: options.hasComment,
-          isNative: options.isNative,
-          basename: path.basename(resourcePath),
-          isComponent: ctorType === 'component',
+        const warn = (msg, loc) => {
+          loaderContext.emitWarning(
+            new Error('[Mpx template error][' + (loc || loaderContext.resourcePath) + ']: ' + msg)
+          )
+        }
+        const error = (msg, loc) => {
+          loaderContext.emitError(
+            new Error('[Mpx template error][' + (loc || loaderContext.resourcePath) + ']: ' + msg)
+          )
+        }
+        const hasVirtualHost = matchCondition(resourcePath, autoVirtualHostRules)
+        const { root, meta } = templateCompiler.parse(template.content, {
+          warn,
+          error,
+          usingComponentsInfo, // processTemplate中无其他地方使用，直接透传 string 类型
+          originalUsingComponents,
+          hasComment,
+          isNative,
+          ctorType,
           mode,
-          srcMode: templateSrcMode,
+          env,
+          srcMode,
           defs,
-          decodeHTMLText: options.decodeHTMLText,
-          externalClasses: options.externalClasses,
-          hasScoped: false,
+          decodeHTMLText,
+          externalClasses,
+          hasScoped,
           moduleId,
-          filePath: loaderContext.resourcePath,
+          filePath: rawResourcePath,
           i18n: null,
-          checkUsingComponents: options.checkUsingComponents,
-          // web模式下全局组件不会被合入usingComponents中，故globalComponents可以传空
-          globalComponents: [],
+          // 与 template-compiler/index 一致：usingComponentsInfo 已合并 globalComponentsInfo，此处白名单避免对仅 app 注册的组件误报「未使用」
+          globalComponents: Object.keys(globalComponents || {}),
+          componentPlaceholder,
           // web模式下实现抽象组件
-          componentGenerics: options.componentGenerics
+          componentGenerics,
+          hasVirtualHost,
+          forceProxyEvent: matchCondition(resourcePath, forceProxyEventRules),
+          checkUsingComponents: matchCondition(resourcePath, checkUsingComponentsRules),
+          customBuiltInComponents: webConfig && webConfig.customBuiltInComponents
         })
-        if (parsed.meta.wxsModuleMap) {
-          wxsModuleMap = parsed.meta.wxsModuleMap
+        if (meta.wxsModuleMap) {
+          wxsModuleMap = meta.wxsModuleMap
         }
-        if (parsed.meta.wxsContentMap) {
-          for (let module in parsed.meta.wxsContentMap) {
-            wxsContentMap[`${resourcePath}~${module}`] = parsed.meta.wxsContentMap[module]
+        if (meta.wxsContentMap) {
+          for (const module in meta.wxsContentMap) {
+            wxsContentMap[`${rawResourcePath}~${module}`] = meta.wxsContentMap[module]
           }
         }
-        if (parsed.meta.builtInComponentsMap) {
-          Object.keys(parsed.meta.builtInComponentsMap).forEach((name) => {
-            builtInComponentsMap[name] = {
-              resource: addQuery(parsed.meta.builtInComponentsMap[name], { component: true })
-            }
-          })
+        const builtInPaths = meta.builtInComponentsMap || {}
+        Object.keys(builtInPaths).forEach((name) => {
+          builtInComponentsMap[name] = {
+            resource: addQuery(builtInPaths[name], { isComponent: true })
+          }
+        })
+        if (meta.genericsInfo) {
+          genericsInfo = meta.genericsInfo
         }
-        if (parsed.meta.genericsInfo) {
-          genericsInfo = parsed.meta.genericsInfo
-        }
-        // 输出H5有多个root element时, 使用div标签包裹
-        if (parsed.root.tag === 'temp-node') {
-          const childLen = calculateRootEleChild(parsed.root.children)
-          if (childLen >= 2) {
-            parsed.root.tag = 'div'
+
+        // virtualHost 下多根节点需要编译期报错（子组件必须单根）
+        if (hasVirtualHost && ctorType === 'component') {
+          const realRootChildren = root.children.filter(c => c.type === 1 && c.tag !== 'temp-node')
+          if (realRootChildren.length > 1) {
+            error('Web: when virtualHost is enabled, the component template must have a single root element; please wrap with one root element.')
           }
         }
-        return templateCompiler.serialize(parsed.root)
+
+        // 收集 imports / 本地 templates，供 processScript 生成 wxTemplateComponentsMap
+        const hasImports = !!(meta.imports && meta.imports.length)
+        const hasLocals = !!(meta.templates && Object.keys(meta.templates).length)
+        if (hasImports || hasLocals) {
+          const locals = []
+          if (meta.templates) {
+            Object.keys(meta.templates).forEach((name) => {
+              const tplNode = meta.templates[name]
+              const tpl = serializeWxTemplateDefinition(tplNode, error, name)
+              locals.push({
+                name: getWxTemplateComponentName(name),
+                template: tpl
+              })
+            })
+          }
+          const importMergeExprs = []
+          if (meta.imports) {
+            meta.imports.forEach((importSrc) => {
+              importMergeExprs.push(buildWebTemplateImportMergeExpr(loaderContext, importSrc, projectRoot))
+            })
+          }
+          wxTemplateComponentsInfo = {
+            imports: importMergeExprs,
+            locals
+          }
+        }
+
+        // Page 在 web 模式下插入 titlebar 组件
+        if (ctorType === 'page') {
+          builtInComponentsMap['mpx-titlebar'] = {
+            resource: addQuery(titleBarPath, { isComponent: true })
+          }
+          const serialized = templateCompiler.serialize(root)
+          return `<mpx-titlebar :page-config="$options.__mpxPageConfig">${serialized}</mpx-titlebar>`
+        }
+
+        return templateCompiler.serialize(root)
       }
     })
-    output += '\n\n'
+    output += '\n'
   }
 
   callback(null, {
     output,
     builtInComponentsMap,
     genericsInfo,
-    wxsModuleMap
+    wxsModuleMap,
+    wxTemplateComponentsInfo
   })
 }

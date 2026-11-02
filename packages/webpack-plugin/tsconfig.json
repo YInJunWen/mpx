@@ -1,0 +1,25 @@
+// 用于lib下文件的语法检查，ts 类型提示
+{
+  "include": [
+    "./lib",
+  ],
+  "exclude": [
+    "./lib/runtime/components/react"
+  ],
+  "compilerOptions": {
+    "module": "nodenext",
+    "target": "esnext",
+    "noImplicitThis": true,
+    "noImplicitAny": true,
+    "skipLibCheck": true,
+    "allowJs": true,
+    "checkJs": false,
+    "strictNullChecks": true,
+    "moduleResolution": "nodenext",
+    "allowSyntheticDefaultImports": true,
+    "noEmit": true,
+    "lib": [
+      "esnext",
+    ]
+  }
+}

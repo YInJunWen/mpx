@@ -29,11 +29,38 @@ module.exports = function ({ print }) {
   const webPropLog = print({ platform: 'web', tag: TAG_NAME, isError: false })
   const webEventLog = print({ platform: 'web', tag: TAG_NAME, isError: false, type: 'event' })
   const qaPropLog = print({ platform: 'qa', tag: TAG_NAME, isError: false })
+  const ksPropLog = print({ platform: 'ks', tag: TAG_NAME, isError: false })
+  const ksEventLog = print({ platform: 'ks', tag: TAG_NAME, isError: false, type: 'event' })
   const wxPropValueLog = print({ platform: 'wx', tag: TAG_NAME, isError: false, type: 'value' })
+  const iosValueLogError = print({ platform: 'ios', tag: TAG_NAME, isError: true, type: 'value' })
+  const iosValueLog = print({ platform: 'ios', tag: TAG_NAME, isError: false, type: 'value' })
+  const iosPropLog = print({ platform: 'ios', tag: TAG_NAME, isError: false })
+  const iosEventLog = print({ platform: 'ios', tag: TAG_NAME, isError: false, type: 'event' })
+  const androidValueLogError = print({ platform: 'android', tag: TAG_NAME, isError: true, type: 'value' })
+  const androidValueLog = print({ platform: 'android', tag: TAG_NAME, isError: false, type: 'value' })
+  const androidPropLog = print({ platform: 'android', tag: TAG_NAME, isError: false })
+  const androidEventLog = print({ platform: 'android', tag: TAG_NAME, isError: false, type: 'event' })
+
+  const harmonyValueLogError = print({ platform: 'harmony', tag: TAG_NAME, isError: true, type: 'value' })
+  const harmonyValueLog = print({ platform: 'harmony', tag: TAG_NAME, isError: false, type: 'value' })
+  const harmonyPropLog = print({ platform: 'harmony', tag: TAG_NAME, isError: false })
+  const harmonyEventLog = print({ platform: 'harmony', tag: TAG_NAME, isError: false, type: 'event' })
 
   return {
     test: TAG_NAME,
     web (tag, { el }) {
+      el.isBuiltIn = true
+      return 'mpx-button'
+    },
+    ios (tag, { el }) {
+      el.isBuiltIn = true
+      return 'mpx-button'
+    },
+    android (tag, { el }) {
+      el.isBuiltIn = true
+      return 'mpx-button'
+    },
+    harmony (tag, { el }) {
       el.isBuiltIn = true
       return 'mpx-button'
     },
@@ -102,10 +129,35 @@ module.exports = function ({ print }) {
           if (isMustache(value)) {
             ttValueLog({ name, value })
           } else {
-            const supportList = ['share', 'getPhoneNumber', 'contact']
+            const supportList = ['share', 'getPhoneNumber', 'contact', 'im', 'openSetting', 'addShortcut']
             if (value && supportList.indexOf(value) === -1) {
               ttValueLogError({ name, value })
             }
+          }
+        },
+        ios ({ name, value }) {
+          // TODO 此处open-type无其他属性支持了？
+          const supported = ['share']
+          if (isMustache(value)) {
+            iosValueLog({ name, value })
+          } else if (!supported.includes(value)) {
+            iosValueLogError({ name, value })
+          }
+        },
+        android ({ name, value }) {
+          const supported = ['share']
+          if (isMustache(value)) {
+            androidValueLog({ name, value })
+          } else if (!supported.includes(value)) {
+            androidValueLogError({ name, value })
+          }
+        },
+        harmony ({ name, value }) {
+          const supported = ['share']
+          if (isMustache(value)) {
+            harmonyValueLog({ name, value })
+          } else if (!supported.includes(value)) {
+            harmonyValueLogError({ name, value })
           }
         }
       },
@@ -143,6 +195,16 @@ module.exports = function ({ print }) {
       {
         test: /^(open-type|lang|session-from|send-message-title|send-message-path|send-message-img|app-parameter|show-message-card|bindgetuserinfo|bindcontact|bindgetphonenumber|binderror|bindopensetting|bindlaunchapp)$/,
         qa: qaPropLog
+      },
+      {
+        test: /^(lang|from-type|send-message-title|send-message-path|send-message-img|app-parameter|show-message-card|phone-number-no-quota-toast|bindgetuserinfo|bindcontact|createliveactivity|bindgetphonenumber|bindgetrealtimephonenumber|binderror|bindopensetting|bindlaunchapp|bindchooseavatar|bindagreeprivacyauthorization)$/,
+        ios: iosPropLog,
+        android: androidPropLog,
+        harmony: harmonyPropLog
+      },
+      {
+        test: /^(hover-stop-propagation|session-from|send-message-title|send-message-path|send-message-img|app-parameter|show-message-card|app-parameter|phone-number-no-quota-toast|need-show-entrance|entrance-path)$/,
+        ks: ksPropLog
       }
     ],
     event: [
@@ -175,6 +237,13 @@ module.exports = function ({ print }) {
       {
         test: /^(getuserinfo|contact|error|launchapp|opensetting|getphonenumber)$/,
         web: webEventLog
+      },
+      {
+        test: /^(getuserinfo|contact|getphonenumber|getrealtimephonenumber|error|opensetting|launchapp|chooseavatar|agreeprivacyauthorization)$/,
+        ios: iosEventLog,
+        android: androidEventLog,
+        harmony: harmonyEventLog,
+         ks: ksEventLog
       }
     ]
   }

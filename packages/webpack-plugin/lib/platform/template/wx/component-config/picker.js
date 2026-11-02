@@ -4,13 +4,27 @@ module.exports = function ({ print }) {
   const aliPropLogError = print({ platform: 'ali', tag: TAG_NAME, isError: true })
   const aliPropLog = print({ platform: 'ali', tag: TAG_NAME, isError: false })
   const aliEventLog = print({ platform: 'ali', tag: TAG_NAME, isError: false, type: 'event' })
-  const jdPropLog = print({ platform: 'jd', tag: TAG_NAME, isError: true })
+  const jdPropLog = print({ platform: 'jd', tag: TAG_NAME, isError: false })
   const ttPropLog = print({ platform: 'bytedance', tag: TAG_NAME, isError: false })
   const baiduPropLog = print({ platform: 'baidu', tag: TAG_NAME, isError: false })
   const qaPropLog = print({ platform: 'qa', tag: TAG_NAME, isError: false })
+  const ksPropLog = print({ platform: 'ks', tag: TAG_NAME, isError: false })
+
   return {
     test: TAG_NAME,
     web (tag, { el }) {
+      el.isBuiltIn = true
+      return 'mpx-picker'
+    },
+    ios (tag, { el }) {
+      el.isBuiltIn = true
+      return 'mpx-picker'
+    },
+    android (tag, { el }) {
+      el.isBuiltIn = true
+      return 'mpx-picker'
+    },
+    harmony (tag, { el }) {
       el.isBuiltIn = true
       return 'mpx-picker'
     },
@@ -21,7 +35,6 @@ module.exports = function ({ print }) {
           if (attr.value !== 'selector') {
             aliPropLogError(attr)
           }
-          return false
         }
       },
       {
@@ -30,7 +43,8 @@ module.exports = function ({ print }) {
         swan: baiduPropLog,
         ali: aliPropLog,
         jd: jdPropLog,
-        qa: qaPropLog
+        qa: qaPropLog,
+        ks: ksPropLog
       }
     ],
     event: [

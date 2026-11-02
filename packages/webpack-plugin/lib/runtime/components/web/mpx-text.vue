@@ -1,5 +1,6 @@
 <script>
   import getInnerListeners from './getInnerListeners'
+  import * as perf from '@mpxjs/perf'
 
   const encodeMap = {
     ' ': '&nbsp;',
@@ -34,26 +35,33 @@
       }
     },
     render (createElement) {
-      let text = ''
+      let id = -1
+      if (__mpx_perf_framework__) id = perf.scopeStart('text:render')
       let classNames = ['mpx-text']
       let decode = false
       const slots = this.$slots.default || []
+      const newSlots = []
       slots.forEach((item) => {
         if (item.text) {
-          // item.text = encodeText(item.text)
-          text += item.text
+          switch (this.space) {
+            case 'ensp':
+            case 'emsp':
+            case 'nbsp':
+              decode = true
+              item.text = item.text.replace(/ /g, `&${this.space};`)
+              break
+          }
+          newSlots.push(createElement('span', {
+            domProps: {
+              innerHTML: item.text
+            }
+          }))
+        } else {
+          newSlots.push(item)
         }
       })
       if (this.selectable) {
         classNames.push('selectable')
-      }
-      switch (this.space) {
-        case 'ensp':
-        case 'emsp':
-        case 'nbsp':
-          decode = true
-          text = text.replace(/ /g, `&${this.space};`)
-          break
       }
       if (this.decode) {
         decode = true
@@ -62,12 +70,9 @@
         class: classNames,
         on: getInnerListeners(this)
       }
-      if (decode) {
-        data.domProps = {
-          innerHTML: text
-        }
-      }
-      return createElement('span', data, slots)
+      const result = createElement('span', data, decode ? newSlots : slots)
+      if (__mpx_perf_framework__) perf.scopeEnd(id)
+      return result
     }
   }
 </script>

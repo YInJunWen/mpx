@@ -1,9 +1,9 @@
 {
   "name": "@mpxjs/fetch",
-  "version": "2.6.103",
+  "version": "2.11.1",
   "description": "mpx fetch lib",
   "author": "donghongping",
-  "license": "ISC",
+  "license": "Apache-2.0",
   "main": "src/index.js",
   "types": "@types/index.d.ts",
   "directories": {
@@ -14,7 +14,8 @@
     "@types"
   ],
   "publishConfig": {
-    "registry": "https://registry.npmjs.org"
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
   },
   "repository": {
     "type": "git",
@@ -28,9 +29,10 @@
     "test": "echo \"Error: run tests from root\" && exit 1"
   },
   "dependencies": {
+    "@mpxjs/api-proxy": "^2.11.1",
+    "@mpxjs/utils": "^2.11.0",
+    "json-bigint": "^1.0.0",
     "path-to-regexp": "^6.2.0"
   },
-  "peerDependencies": {
-    "@mpxjs/core": "^2.3.0"
-  }
+  "gitHead": "2d37697869b9bdda3efab92dda8c910b68fd05c0"
 }

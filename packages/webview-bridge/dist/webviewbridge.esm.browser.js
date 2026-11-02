@@ -1,12 +1,12 @@
 /**
- * mpxjs webview bridge v2.6.61
- * (c) 2021 @mpxjs team
+ * mpxjs webview bridge v2.11.1
+ * (c) 2026 @mpxjs team
  * @license Apache
  */
 function loadScript (url, { time = 5000, crossOrigin = false } = {}) {
   function request () {
     return new Promise((resolve, reject) => {
-      let sc = document.createElement('script');
+      const sc = document.createElement('script');
       sc.type = 'text/javascript';
       sc.async = 'async';
 
@@ -43,309 +43,349 @@ function loadScript (url, { time = 5000, crossOrigin = false } = {}) {
   return Promise.race([request(), timeout()])
 }
 
-const SDK_URL_MAP = {
-  wx: 'https://res.wx.qq.com/open/js/jweixin-1.3.2.js',
-  qq: 'https://qqq.gtimg.cn/miniprogram/webview_jssdk/qqjssdk-1.0.0.js',
-  ali: 'https://appx/web-view.min.js',
-  baidu: 'https://b.bdstatic.com/searchbox/icms/searchbox/js/swan-2.0.4.js',
-  tt: 'https://s3.pstatp.com/toutiao/tmajssdk/jssdk.js'
-};
-
-const ENV_PATH_MAP = {
-  wx: ['wx', 'miniProgram'],
-  qq: ['qq', 'miniProgram'],
-  ali: ['my'],
-  baidu: ['swan', 'webView'],
-  tt: ['tt', 'miniProgram']
-};
-
-let env = null;
-let isOrigin;
-window.addEventListener('message', (event) => {
-  isOrigin = event.data === event.origin;
-  if (isOrigin) {
-    env = 'web';
-    window.parent.postMessage({
-      type: 'load',
-      detail: {
-        load: true
-      }
-    }, '*');
+let sdkReady;
+const loadErrorCallbacks = [];
+const SDK_URL_MAP = Object.assign({
+  wx: {
+    url: 'https://res.wx.qq.com/open/js/jweixin-1.3.2.js'
+  },
+  qq: {
+    url: 'https://qqq.gtimg.cn/miniprogram/webview_jssdk/qqjssdk-1.0.0.js'
+  },
+  my: {
+    url: 'https://appx/web-view.min.js'
+  },
+  swan: {
+    url: 'https://b.bdstatic.com/searchbox/icms/searchbox/js/swan-2.0.4.js'
+  },
+  tt: {
+    url: 'https://lf3-cdn-tos.bytegoofy.com/obj/goofy/developer/jssdk/jssdk-1.2.1.js'
   }
-}, false);
-// 环境判断
-let systemUA = navigator.userAgent;
-if (systemUA.indexOf('AlipayClient') > -1) {
-  env = 'ali';
+}, window.sdkUrlMap);
+function getMpxWebViewId () {
+  const href = location.href;
+  const reg = /mpx_webview_id=(\d+)/g;
+  const matchVal = reg.exec(href);
+  let result;
+  if (matchVal && matchVal[1]) {
+    result = +matchVal[1];
+  }
+  return result
+}
+let env = null;
+let callbackId = 0;
+const clientUid = getMpxWebViewId();
+const callbacks = {};
+
+const runCallback = (msgData) => {
+  const { callbackId, error, result } = msgData;
+  if (callbackId !== undefined && callbacks[callbackId]) {
+    if (error) {
+      callbacks[callbackId](error);
+    } else {
+      callbacks[callbackId](null, result);
+    }
+    delete callbacks[callbackId];
+  }
+};
+
+const eventListener = (event) => {
+  // 接收web-view的回调
+  let msgData = event.data;
+  try {
+    if (typeof msgData === 'string') {
+      msgData = JSON.parse(msgData);
+    }
+  } catch (e) {
+  }
+  runCallback(msgData);
+};
+
+// 环境判断逻辑
+const systemUA = navigator.userAgent;
+if ((systemUA.indexOf('AlipayClient') > -1 && systemUA.indexOf('MiniProgram') > -1) || systemUA.indexOf("Touch 'n Go") > -1) {
+  env = 'my';
 } else if (systemUA.toLowerCase().indexOf('miniprogram') > -1) {
   env = systemUA.indexOf('QQ') > -1 ? 'qq' : 'wx';
-} else if (systemUA.indexOf('swan') > -1) {
-  env = 'baidu';
-} else if (systemUA.indexOf('toutiao') > -1) {
+} else if (systemUA.indexOf('swan/') > -1) {
+  env = 'swan';
+} else if (systemUA.toLocaleLowerCase().indexOf('toutiao') > -1) {
   env = 'tt';
+} else if (window.ReactNativeWebView) {
+  env = 'rn';
+  window.mpxWebviewMessageCallback = runCallback;
 } else {
-  window.parent.postMessage({
-    type: 'load',
-    detail: {
-      load: true
-    }
-  }, '*');
+  env = 'web';
+  window.addEventListener('message', eventListener, false);
 }
 
-function postMessage (type, data) {
-  let eventType;
-  switch (type) {
-    case 'postMessage':
-      eventType = 'message';
-      break
-    case 'navigateBack':
-      eventType = 'navigateBack';
-      break
-    case 'navigateTo':
-      eventType = 'navigateTo';
-      break
-    case 'redirectTo':
-      eventType = 'redirectTo';
-      break
-    case 'switchTab':
-      eventType = 'switchTab';
-      break
-    case 'reLaunch':
-      eventType = 'reLaunch';
-      break
-    case 'getEnv':
-      eventType = 'getEnv';
-      break
-  }
-  if (type !== 'getEnv' && isOrigin) {
-    window.parent.postMessage({
-      type: eventType,
-      detail: {
-        data
+const initWebviewBridge = () => {
+  sdkReady = (env !== 'web' && env !== 'rn') ? SDK_URL_MAP[env].url ? loadScript(SDK_URL_MAP[env].url) : Promise.reject(new Error('未找到对应的sdk')) : Promise.resolve();
+  sdkReady.catch((err = {}) => {
+    loadErrorCallbacks.forEach((callback) => {
+      if (typeof callback === 'function') {
+        callback(err.message || err);
       }
-    }, '*');
+    });
+  });
+  getWebviewApi();
+};
+
+let webviewSdkready = false;
+function runWebviewApiMethod (callback) {
+  if (webviewSdkready) {
+    callback();
   } else {
-    data({
-      miniprogram: false
+    sdkReady.then(() => {
+      webviewSdkready = true;
+      callback();
     });
   }
 }
 
-const webviewApiList = {};
-
-function getEnvWebviewVariable () {
-  return ENV_PATH_MAP[env].reduce((acc, cur) => acc[cur], window)
-}
-
-function getEnvVariable () {
-  return window[ENV_PATH_MAP[env][0]]
-}
-
-const initWebviewBridge = () => {
-  if (env === null) {
-    console.log('mpxjs/webview: 未识别的环境，当前仅支持 微信、支付宝、百度、头条 QQ 小程序');
-    getWebviewApi();
-    return
-  }
-  const sdkReady = !window[env] ? SDK_URL_MAP[env] ? loadScript(SDK_URL_MAP[env]) : Promise.reject(new Error('未找到对应的sdk')) : Promise.resolve();
-  getWebviewApi(sdkReady);
-};
-
-const getWebviewApi = (sdkReady) => {
-  const webviewApiNameList = {
-    navigateTo: 'navigateTo',
-    navigateBack: 'navigateBack',
-    switchTab: 'switchTab',
-    reLaunch: 'reLaunch',
-    redirectTo: 'redirectTo',
-    getEnv: 'getEnv',
-    postMessage: 'postMessage',
-    getLoadError: 'getLoadError',
-    onMessage: {
-      ali: true
-    }
-  };
-
-  for (let item in webviewApiNameList) {
-    const apiName = typeof webviewApiNameList[item] === 'string' ? webviewApiNameList[item] : !webviewApiNameList[item][env] ? false : typeof webviewApiNameList[item][env] === 'string' ? webviewApiNameList[item][env] : item;
-
-    webviewApiList[item] = (...args) => {
-      if (env === 'web') {
-        return postMessage(item, ...args)
-        // console.log(`${env}小程序不支持 ${item} 方法`)
-      } else {
-        return sdkReady.then(() => {
-          if (apiName === 'getLoadError') {
-            return Promise.resolve('js加载完成')
-          }
-          getEnvWebviewVariable()[apiName](...args);
-        })
-      }
-    };
-  }
-};
-
-const getAdvancedApi = (config, mpx) => {
-  // 微信的非小程序相关api需要config配置
-  if (!mpx) {
-    console.log('需要提供挂载方法的mpx对象');
-    return
-  }
-  if (window.wx) {
-    if (config) {
-      console.log('微信环境下需要配置wx.config才能挂载方法');
+const webviewBridge = {
+  config (config) {
+    if (env !== 'wx') {
+      console.warn('非微信环境不需要配置config');
       return
     }
-    window.wx.config(config);
+    runWebviewApiMethod(() => {
+      if (window.wx) {
+        window.wx.config(config);
+      }
+    });
+  },
+  onLoadScriptError (callback) {
+    if (loadErrorCallbacks.indexOf(callback) === -1) {
+      loadErrorCallbacks.push(callback);
+    }
+  },
+  offLoadScriptError (callback) {
+    const index = loadErrorCallbacks.indexOf(callback);
+    if (index > -1) {
+      loadErrorCallbacks.splice(index, 1);
+    }
   }
+};
 
-  // key为导出的标准名，对应平台不支持的话为undefined
-  const ApiList = {
-    'checkJSApi': {
-      wx: 'checkJSApi'
+function postMessage (type, ...extraData) {
+  if (type === 'invoke') {
+    type = extraData[0];
+    extraData = extraData.slice(1);
+  }
+  const data = extraData[0] || {};
+  if (type !== 'getEnv') {
+    const currentCallbackId = ++callbackId;
+    callbacks[currentCallbackId] = (err, res) => {
+      if (err) {
+        data.fail && data.fail(err);
+        data.complete && data.complete(err);
+      } else {
+        data.success && data.success(res);
+        data.complete && data.complete(res);
+      }
+      delete callbacks[currentCallbackId];
+    };
+    const postParams = {
+      type,
+      callbackId,
+      args: extraData
+    };
+    if (clientUid !== undefined) {
+      postParams.clientUid = clientUid;
+    }
+    if (window.ReactNativeWebView) {
+      window.ReactNativeWebView.postMessage && window.ReactNativeWebView.postMessage(JSON.stringify(postParams));
+    } else {
+      window.parent.postMessage && window.parent.postMessage(JSON.stringify(postParams), '*');
+    }
+  } else {
+    let result = {
+      webapp: true
+    };
+    if (window.ReactNativeWebView) {
+      result = {
+        reactNative: true
+      };
+    }
+    data(result);
+  }
+}
+
+const getWebviewApi = () => {
+  const multiApiMap = {
+    wx: {
+      keyName: 'miniProgram',
+      api: [
+        'navigateTo',
+        'navigateBack',
+        'switchTab',
+        'reLaunch',
+        'redirectTo',
+        'postMessage',
+        'getEnv'
+      ]
     },
-    'chooseImage': {
-      wx: 'chooseImage',
-      baidu: 'chooseImage',
-      ali: 'chooseImage'
+    tt: {
+      keyName: 'miniProgram',
+      api: [
+        'redirectTo',
+        'navigateTo',
+        'switchTab',
+        'reLaunch',
+        'navigateBack',
+        'setSwipeBackModeSync',
+        'postMessage',
+        'getEnv',
+        'checkJsApi',
+        'chooseImage',
+        'compressImage',
+        'previewImage',
+        'uploadFile',
+        'getNetworkType',
+        'openLocation',
+        'getLocation'
+      ]
     },
-    'previewImage': {
-      wx: 'previewImage',
-      baidu: 'previewImage',
-      ali: 'previewImage'
+    swan: {
+      keyName: 'webView',
+      api: [
+        'navigateTo',
+        'navigateBack',
+        'switchTab',
+        'reLaunch',
+        'redirectTo',
+        'getEnv',
+        'postMessage'
+      ]
     },
-    'uploadImage': {
-      wx: 'uploadImage'
-    },
-    'downloadImage': {
-      wx: 'downloadImage'
-    },
-    'getLocalImgData': {
-      wx: 'getLocalImgData'
-    },
-    'startRecord': {
-      wx: 'startRecord'
-    },
-    'stopRecord': {
-      wx: 'stopRecord'
-    },
-    'onVoiceRecordEnd': {
-      wx: 'onVoiceRecordEnd'
-    },
-    'playVoice': {
-      wx: 'playVoice'
-    },
-    'pauseVoice': {
-      wx: 'pauseVoice'
-    },
-    'stopVoice': {
-      wx: 'stopVoice'
-    },
-    'onVoicePlayEnd': {
-      wx: 'onVoicePlayEnd'
-    },
-    'uploadVoice': {
-      wx: 'uploadVoice'
-    },
-    'downloadVoice': {
-      wx: 'downloadVoice'
-    },
-    'translateVoice': {
-      wx: 'translateVoice'
-    },
-    'getNetworkType': {
-      wx: 'getNetworkType',
-      baidu: 'getNetworkType',
-      ali: 'getNetworkType'
-    },
-    'openLocation': {
-      wx: 'openLocation',
-      baidu: 'openLocation',
-      ali: 'openLocation'
-    },
-    'getLocation': {
-      wx: 'getLocation',
-      baidu: 'getLocation',
-      ali: 'getLocation'
-    },
-    'startSearchBeacons': {
-      wx: 'startSearchBeacons'
-    },
-    'stopSearchBeacons': {
-      wx: 'stopSearchBeacons'
-    },
-    'onSearchBeacons': {
-      wx: 'onSearchBeacons'
-    },
-    'scanQRCode': {
-      wx: 'scanQRCode'
-    },
-    'chooseCard': {
-      wx: 'chooseCard'
-    },
-    'addCard': {
-      wx: 'addCard'
-    },
-    'openCard': {
-      wx: 'openCard'
-    },
-    'alert': {
-      ali: 'alert'
-    },
-    'showLoading': {
-      ali: 'showLoading'
-    },
-    'hideLoading': {
-      ali: 'hideLoading'
-    },
-    'setStorage': {
-      ali: 'setStorage'
-    },
-    'getStorage': {
-      ali: 'getStorage'
-    },
-    'removeStorage': {
-      ali: 'removeStorage'
-    },
-    'clearStorage': {
-      ali: 'clearStorage'
-    },
-    'getStorageInfo': {
-      ali: 'getStorageInfo'
-    },
-    'startShare': {
-      ali: 'startShare'
-    },
-    'tradePay': {
-      ali: 'tradePay'
-    },
-    'onMessage': {
-      ali: 'onMessage'
+    qq: {
+      keyName: 'miniProgram',
+      api: [
+        'navigateTo',
+        'navigateBack',
+        'switchTab',
+        'reLaunch',
+        'redirectTo',
+        'getEnv',
+        'postMessage'
+      ]
     }
   };
-
-  for (let item in ApiList) {
-    mpx[item] = (...args) => {
-      if (!ApiList[item][env]) {
-        console.error(`此环境不支持${item}方法`);
+  const singleApiMap = {
+    wx: [
+      'checkJSApi',
+      'chooseImage',
+      'previewImage',
+      'uploadImage',
+      'downloadImage',
+      'getLocalImgData',
+      'startRecord',
+      'stopRecord',
+      'onVoiceRecordEnd',
+      'playVoice',
+      'pauseVoice',
+      'stopVoice',
+      'onVoicePlayEnd',
+      'uploadVoice',
+      'downloadVoice',
+      'translateVoice',
+      'getNetworkType',
+      'openLocation',
+      'getLocation',
+      'startSearchBeacons',
+      'stopSearchBeacons',
+      'onSearchBeacons',
+      'scanQRCode',
+      'chooseCard',
+      'addCard',
+      'openCard'
+    ],
+    my: [
+      'navigateTo',
+      'navigateBack',
+      'switchTab',
+      'reLaunch',
+      'redirectTo',
+      'chooseImage',
+      'previewImage',
+      'getLocation',
+      'openLocation',
+      'alert',
+      'showLoading',
+      'hideLoading',
+      'getNetworkType',
+      'startShare',
+      'tradePay',
+      'postMessage',
+      'onMessage',
+      'getEnv'
+    ],
+    swan: [
+      'makePhoneCall',
+      'setClipboardData',
+      'getNetworkType',
+      'openLocation',
+      'getLocation',
+      'chooseLocation',
+      'chooseImage',
+      'previewImage',
+      'openShare',
+      'navigateToSmartProgram'
+    ],
+    web: [
+      'navigateTo',
+      'navigateBack',
+      'switchTab',
+      'reLaunch',
+      'redirectTo',
+      'getEnv',
+      'postMessage',
+      'getLocation',
+      'invoke'
+    ],
+    rn: [
+      'navigateTo',
+      'navigateBack',
+      'switchTab',
+      'reLaunch',
+      'redirectTo',
+      'getEnv',
+      'postMessage',
+      'getLocation',
+      'invoke'
+    ],
+    tt: []
+  };
+  const multiApi = multiApiMap[env] || {};
+  const singleApi = singleApiMap[env] || [];
+  const multiApiLists = multiApi.api || [];
+  multiApiLists.forEach((item) => {
+    webviewBridge[item] = (...args) => {
+      runWebviewApiMethod(() => {
+        window[env][multiApi.keyName][item](...args);
+      });
+    };
+  });
+  singleApi.forEach((item) => {
+    webviewBridge[item] = (...args) => {
+      if (env === 'web' || env === 'rn') {
+        postMessage(item, ...args);
+      } else if (env === 'wx') {
+        runWebviewApiMethod(() => {
+          window[env] && window[env].ready(() => {
+            window[env][item](...args);
+          });
+        });
       } else {
-        console.log(ApiList[item][env], 'ApiList[item][env]');
-        getEnvVariable()[ApiList[item][env]](...args);
+        runWebviewApiMethod(() => {
+          window[env][item](...args);
+        });
       }
     };
-  }
+  });
 };
 
 initWebviewBridge();
 
-const bridgeFunction = {
-  ...webviewApiList,
-  getAdvancedApi,
-  mpxEnv: env
-};
-
-const { navigateTo, navigateBack, switchTab, reLaunch, redirectTo, getEnv, postMessage: postMessage$1, getLoadError } = webviewApiList;
-const { getAdvancedApi: getAdvancedApi$1 } = bridgeFunction;
-
-export default bridgeFunction;
-export { getAdvancedApi$1 as getAdvancedApi, getEnv, getLoadError, navigateBack, navigateTo, postMessage$1 as postMessage, reLaunch, redirectTo, switchTab };
+export default webviewBridge;

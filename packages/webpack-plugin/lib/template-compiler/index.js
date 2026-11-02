@@ -1,226 +1,191 @@
 const compiler = require('./compiler')
-const loaderUtils = require('loader-utils')
-const bindThis = require('./bind-this').transform
-const InjectDependency = require('../dependency/InjectDependency')
+const bindThis = require('./bind-this')
 const parseRequest = require('../utils/parse-request')
-const getMainCompilation = require('../utils/get-main-compilation')
-const matchCondition = require('../utils/match-condition')
-const path = require('path')
+const { matchCondition } = require('../utils/match-condition')
+const loaderUtils = require('loader-utils')
+const { MPX_DISABLE_EXTRACTOR_CACHE } = require('../utils/const')
+const RecordRuntimeInfoDependency = require('../dependencies/RecordRuntimeInfoDependency')
+const { createTemplateEngine, createSetupTemplate } = require('@mpxjs/template-engine')
+const { stringify } = require('./dynamic')
 
 module.exports = function (raw) {
   this.cacheable()
-  const options = loaderUtils.getOptions(this) || {}
-  const { resourcePath, queryObj } = parseRequest(this.resource)
-  const compilation = this._compilation
-  const mainCompilation = getMainCompilation(compilation)
-  const mpx = mainCompilation.__mpx__
+  const { resourcePath, queryObj, rawResourcePath } = parseRequest(this.resource)
+  const mpx = this.getMpx()
+  const projectRoot = mpx.projectRoot
   const mode = mpx.mode
   const env = mpx.env
   const defs = mpx.defs
   const i18n = mpx.i18n
   const externalClasses = mpx.externalClasses
+  const isUnoCSSScanFile = !!(mpx.hasUnoCSS && mpx.isUnoCSSScanFile && mpx.isUnoCSSScanFile(resourcePath))
   const decodeHTMLText = mpx.decodeHTMLText
   const globalSrcMode = mpx.srcMode
-  const localSrcMode = queryObj.mode
+  const localSrcMode = queryObj.srcMode
   const packageName = queryObj.packageRoot || mpx.currentPackageRoot || 'main'
-  const componentsMap = mpx.componentsMap[packageName]
   const wxsContentMap = mpx.wxsContentMap
+  const optimizeRenderRules = mpx.optimizeRenderRules
+  const usingComponentsInfo = queryObj.usingComponentsInfo ? JSON.parse(queryObj.usingComponentsInfo) : {}
+  const originalUsingComponents = queryObj.originalUsingComponents ? JSON.parse(queryObj.originalUsingComponents) : []
+  const componentPlaceholder = queryObj.componentPlaceholder || []
+  const hasComment = queryObj.hasComment
+  const isNative = queryObj.isNative
+  const ctorType = queryObj.ctorType
+  const hasScoped = queryObj.hasScoped
+  const runtimeCompile = queryObj.isDynamic
+  const moduleId = queryObj.moduleId || mpx.getModuleId(resourcePath, false, queryObj.moduleId ? null : this)
+  const isStatic = queryObj.isStatic
 
-  const warn = (msg) => {
+  let optimizeRenderLevel = 0
+  for (const rule of optimizeRenderRules) {
+    if (matchCondition(resourcePath, rule)) {
+      optimizeRenderLevel = rule.level || 1
+      break
+    }
+  }
+
+  const warn = (msg, loc) => {
     this.emitWarning(
-      new Error('[template compiler][' + this.resource + ']: ' + msg)
+      new Error('[Mpx template warning][' + (loc || this.resourcePath) + ']: ' + msg)
     )
   }
 
-  const error = (msg) => {
+  const error = (msg, loc) => {
     this.emitError(
-      new Error('[template compiler][' + this.resource + ']: ' + msg)
+      new Error('[Mpx template error][' + (loc || this.resourcePath) + ']: ' + msg)
     )
   }
 
-  const parsed = compiler.parse(raw, {
+  const { root, meta } = compiler.parse(raw, {
     warn,
     error,
-    usingComponents: options.usingComponents,
-    hasComment: options.hasComment,
-    isNative: options.isNative,
-    basename: path.basename(resourcePath),
-    isComponent: !!componentsMap[resourcePath],
+    runtimeCompile,
+    componentPlaceholder,
+    hasComment,
+    isNative,
+    ctorType,
     mode,
     env,
     srcMode: localSrcMode || globalSrcMode,
     defs,
     decodeHTMLText,
     externalClasses,
-    hasScoped: options.hasScoped,
-    moduleId: options.moduleId,
-    filePath: this.resourcePath,
+    isUnoCSSScanFile,
+    hasScoped,
+    moduleId,
+    usingComponentsInfo,
+    originalUsingComponents,
+    // 这里需传递rawResourcePath和wxsContentMap保持一致
+    filePath: rawResourcePath,
     i18n,
-    checkUsingComponents: mpx.checkUsingComponents,
-    globalComponents: Object.keys(mpx.usingComponents),
-    // deprecated option
-    globalMpxAttrsFilter: mpx.globalMpxAttrsFilter,
-    forceProxyEvent: matchCondition(this.resourcePath, mpx.forceProxyEventRules),
-    hasVirtualHost: matchCondition(resourcePath, mpx.autoVirtualHostRules)
+    globalComponents: Object.keys(mpx.globalComponents || {}),
+    forceProxyEvent: matchCondition(resourcePath, mpx.forceProxyEventRules) || runtimeCompile,
+    hasVirtualHost: matchCondition(resourcePath, mpx.autoVirtualHostRules),
+    checkUsingComponents: matchCondition(resourcePath, mpx.checkUsingComponentsRules),
+    dynamicTemplateRuleRunner: mpx.dynamicTemplateRuleRunner
   })
 
-  let ast = parsed.root
-  let meta = parsed.meta
-
   if (meta.wxsContentMap) {
-    for (let module in meta.wxsContentMap) {
-      wxsContentMap[`${resourcePath}~${module}`] = meta.wxsContentMap[module]
+    for (const module in meta.wxsContentMap) {
+      wxsContentMap[`${rawResourcePath}~${module}`] = meta.wxsContentMap[module]
     }
   }
 
-  let result = compiler.serialize(ast)
-
-  if (options.isNative || mpx.forceDisableInject) {
+  let result = runtimeCompile ? '' : compiler.serialize(root)
+  if (isNative || isStatic) {
+    // 对于原生小程序组件和静态模版无需注入运行时信息，直接返回模版编译结果
     return result
   }
 
-  const rawCode = `global.currentInject = {
-    moduleId: ${JSON.stringify(options.moduleId)},
-    render: function () {
-      ${compiler.genNode(ast)}this._r();
-    }
+  let resultSource = ''
+
+  for (const module in meta.wxsModuleMap) {
+    const src = loaderUtils.urlToRequest(meta.wxsModuleMap[module], projectRoot)
+    resultSource += `var ${module} = require(${loaderUtils.stringifyRequest(this, src)});\n`
+  }
+
+  resultSource += `global.currentInject = {
+  moduleId: ${JSON.stringify(moduleId)}
 };\n`
 
-  let renderResult
+  if (runtimeCompile) {
+    resultSource += 'global.currentInject.dynamic = true;\n'
+  }
 
-  try {
-    renderResult = bindThis(rawCode, {
-      needCollect: true,
-      ignoreMap: meta.wxsModuleMap
-    })
-  } catch (e) {
-    error(`Invalid render function generated by the template, please check!\n
+  const rawCode = runtimeCompile ? '' : compiler.genNode(root)
+  if (rawCode) {
+    try {
+      const ignoreMap = Object.assign({
+        _i: true,
+        _c: true,
+        _sc: true,
+        _r: true
+      }, meta.wxsModuleMap)
+      const bindResult = optimizeRenderLevel === 2
+        ? bindThis.transformSimple(rawCode, {
+          ignoreMap
+        })
+        : bindThis.transform(rawCode, {
+          needCollect: true,
+          renderReduce: optimizeRenderLevel === 1,
+          ignoreMap
+        })
+      resultSource += `global.currentInject.render = function (_i, _c, _r, _sc) {
+${bindResult.code}
+_r(${optimizeRenderLevel === 2 ? 'true' : ''});
+};\n`
+      if ((mode === 'tt' || mode === 'swan') && bindResult.propKeys) {
+        resultSource += `global.currentInject.propKeys = ${JSON.stringify(bindResult.propKeys)};\n`
+      }
+    } catch (e) {
+      error(`Invalid render function generated by the template, please check!
 Template result:
-${result}\n
+${result}
 Error code:
 ${rawCode}
 Error Detail:
 ${e.stack}`)
-    return result
-  }
-
-  // todo 此处在loader中往其他模块addDep更加危险，考虑修改为通过抽取后的空模块的module.exports来传递信息
-  let globalInjectCode = renderResult.code + '\n'
-
-  if ((mode === 'tt' || mode === 'swan') && renderResult.propKeys) {
-    globalInjectCode += `global.currentInject.propKeys = ${JSON.stringify(renderResult.propKeys)};\n`
+      return result
+    }
   }
 
   if (meta.computed) {
-    globalInjectCode += bindThis(`global.currentInject.injectComputed = {
-  ${meta.computed.join(',')}
-  };`).code + '\n'
+    resultSource += bindThis.transform(`global.currentInject.injectComputed = {${meta.computed.join(',')}};`).code + '\n'
   }
 
   if (meta.refs) {
-    globalInjectCode += `global.currentInject.getRefsData = function () {
-  return ${JSON.stringify(meta.refs)};
-  };\n`
+    resultSource += `global.currentInject.getRefsData = function () { return ${JSON.stringify(meta.refs)}; };\n`
   }
 
   if (meta.options) {
-    globalInjectCode += bindThis(`global.currentInject.injectOptions = ${JSON.stringify(meta.options)};`).code + '\n'
+    resultSource += `global.currentInject.injectOptions = ${JSON.stringify(meta.options)};\n`
   }
 
-  const issuer = this._module.issuer
-  const parser = issuer.parser
-
-  // 同步issuer的dependencies，确保watch中issuer rebuild时template也进行rebuild，使该loader中往issuer中注入的依赖持续有效
-  issuer.buildInfo.fileDependencies.forEach((dep) => {
-    this.addDependency(dep)
-  })
-  issuer.buildInfo.contextDependencies.forEach((dep) => {
-    this.addContextDependency(dep)
+  this.emitFile(resourcePath, '', undefined, {
+    skipEmit: true,
+    extractedResultSource: resultSource
   })
 
-  // 删除issuer中上次注入的dependencies，避免issuer本身不需要更新时上次的注入代码残留
-  issuer.dependencies = issuer.dependencies.filter((dep) => {
-    return !dep.templateInject
-  })
-
-  const dep = new InjectDependency({
-    content: globalInjectCode,
-    index: -2
-  })
-
-  dep.templateInject = true
-  issuer.addDependency(dep)
-
-  let isSync = true
-
-  const iterationOfArrayCallback = (arr, fn) => {
-    for (let index = 0; index < arr.length; index++) {
-      fn(arr[index])
-    }
+  if (queryObj.mpxCustomElement) {
+    this.cacheable(false)
+    const templateEngine = createTemplateEngine(mpx.mode)
+    result += `${createSetupTemplate()}\n` + templateEngine.buildTemplate(mpx.getPackageInjectedTemplateConfig(packageName))
   }
 
-  const dependencies = new Map()
+  // 运行时编译的组件直接返回基础模板的内容，并产出动态文本内容
+  if (runtimeCompile) {
+    // 包含了运行时组件的template模块必须每次都创建（但并不是每次都需要build），用于收集组件节点信息，传递信息以禁用父级extractor的缓存
+    this.emitFile(MPX_DISABLE_EXTRACTOR_CACHE, '', undefined, { skipEmit: true })
 
-  const addDependency = dep => {
-    const resourceIdent = dep.getResourceIdentifier()
-    if (resourceIdent) {
-      const factory = compilation.dependencyFactories.get(dep.constructor)
-      if (factory === undefined) {
-        throw new Error(`No module factory available for dependency type: ${dep.constructor.name}`)
-      }
-      let innerMap = dependencies.get(factory)
-      if (innerMap === undefined) {
-        dependencies.set(factory, (innerMap = new Map()))
-      }
-      let list = innerMap.get(resourceIdent)
-      if (list === undefined) innerMap.set(resourceIdent, (list = []))
-      list.push(dep)
-    }
-  }
-
-  for (let module in meta.wxsModuleMap) {
-    isSync = false
-    const src = loaderUtils.urlToRequest(meta.wxsModuleMap[module], options.root)
-    // 编译render函数只在mpx文件中运行，此处issuer的context一定等同于当前loader的context
-    const expression = `require(${loaderUtils.stringifyRequest(this, src)})`
-    const deps = []
-    parser.parse(expression, {
-      current: {
-        addDependency: dep => {
-          dep.userRequest = module
-          deps.push(dep)
-        }
-      },
-      module: issuer
-    })
-    issuer.addVariable(module, expression, deps)
-    iterationOfArrayCallback(deps, addDependency)
-  }
-
-  if (isSync) {
-    return result
-  } else {
-    const callback = this.async()
-
-    const sortedDependencies = []
-    for (const pair1 of dependencies) {
-      for (const pair2 of pair1[1]) {
-        sortedDependencies.push({
-          factory: pair1[0],
-          dependencies: pair2[1]
-        })
-      }
+    const templateInfo = {
+      templateAst: stringify(root),
+      ...meta.runtimeInfo
     }
 
-    compilation.addModuleDependencies(
-      issuer,
-      sortedDependencies,
-      compilation.bail,
-      null,
-      true,
-      () => {
-        callback(null, result)
-      }
-    )
+    // 以 package 为维度存储，meta 上的数据也只是存储了这个组件的 template 上获取的信息，需要在 dependency 里面再次进行合并操作
+    this._module.addPresentationalDependency(new RecordRuntimeInfoDependency(packageName, resourcePath, { type: 'template', info: templateInfo }))
+    // 运行时组件的模版直接返回空，在生成模版静态文件的时候(beforeModuleAssets)再动态注入
   }
+
+  return result
 }

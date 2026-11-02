@@ -1,20 +1,21 @@
-import { CREATED } from '../../core/innerLifecycle'
-import { inBrowser } from '../../helper/utils'
+import {
+  BEFORECREATE,
+  CREATED,
+  ONHIDE,
+  ONSHOW,
+  ONLOAD,
+  ONRESIZE
+} from '../../core/innerLifecycle'
+import { isFunction, isBrowser } from '@mpxjs/utils'
+import { observable } from 'vue'
 
 let systemInfo = {}
 
 let count = 0
 
-function getCurrentPageInstance () {
-  let vnode = global.__mpxRouter && global.__mpxRouter.__mpxActiveVnode
-  let pageInstance
-  if (vnode && vnode.componentInstance) {
-    pageInstance = vnode.tag.endsWith('mpx-tab-bar-container') ? vnode.componentInstance.$children[1] : vnode.componentInstance
-  }
-  return pageInstance
-}
-
 function onResize () {
+  if (typeof getCurrentPages !== 'function') return
+
   // 设备屏幕状态
   const deviceOrientation = window.screen.width > window.screen.height ? 'landscape' : 'portrait'
 
@@ -29,54 +30,92 @@ function onResize () {
     }
   }
 
-  const _t = getCurrentPageInstance()
+  const pageInstance = getCurrentPages().slice(-1)[0]
 
-  if (_t) {
-    _t.mpxPageStatus = `resize${count++}`
-    if (typeof _t.onResize === 'function') {
-      _t.onResize(systemInfo)
-    }
+  if (pageInstance && pageInstance.__mpxProxy) {
+    pageInstance.mpxPageStatus = `resize${count++}`
+    pageInstance.__mpxProxy.callHook(ONRESIZE, [systemInfo])
   }
 }
 
 // listen resize
-if (inBrowser) {
+if (isBrowser) {
   window.addEventListener('resize', onResize)
 }
 
+function getParentPage (vm) {
+  let parent = vm.$parent
+  while (parent) {
+    if (parent.route) {
+      return parent
+    } else if (parent.$page) {
+      return parent.$page
+    }
+    parent = parent.$parent
+  }
+}
+
 export default function pageStatusMixin (mixinType) {
+  const mixin = {}
+
   if (mixinType === 'page') {
-    return {
+    Object.assign(mixin, {
       data: {
-        mpxPageStatus: 'show'
+        mpxPageStatus: null
+      },
+      beforeCreate () {
+        // 同一页面定义可创建多个实例，配置需按实例隔离。
+        this.$options.__mpxPageConfig = observable(Object.assign({}, global.__mpxPageConfig, this.$options.__mpxPageConfig))
       },
       activated () {
         this.mpxPageStatus = 'show'
-        this.onShow && this.onShow()
       },
       deactivated () {
         this.mpxPageStatus = 'hide'
-        this.onHide && this.onHide()
+      },
+      created () {
+        // onLoad应该在用户声明周期CREATED后再执行，故此处使用原生created声明周期来触发onLoad
+        const query = this.$root.$options?.router?.currentRoute?.query || {}
+        this.__mpxProxy.callHook(ONLOAD, [query, query])
+      }
+    })
+  }
+
+  // 创建组件时记录当前所属page，用于驱动pageLifetimes和onShow/onHide钩子
+  if (mixinType === 'component') {
+    Object.assign(mixin, {
+      [BEFORECREATE] () {
+        this.$page = getParentPage(this)
+      }
+    })
+  }
+
+  Object.assign(mixin, {
+    [CREATED] () {
+      if (isBrowser) {
+        const pageInstance = mixinType === 'page' ? this : this.$page
+        if (pageInstance) {
+          this.$watch(() => pageInstance.mpxPageStatus, status => {
+            if (!status) return
+            if (status === 'show') this.__mpxProxy.callHook(ONSHOW)
+            if (status === 'hide') this.__mpxProxy.callHook(ONHIDE)
+            const pageLifetimes = this.__mpxProxy.options.pageLifetimes
+            if (pageLifetimes) {
+              if (/^resize/.test(status) && isFunction(pageLifetimes.resize)) {
+                // resize
+                pageLifetimes.resize.call(this, systemInfo)
+              } else if (isFunction(pageLifetimes[status])) {
+                // show & hide
+                pageLifetimes[status].call(this)
+              }
+            }
+          }, {
+            sync: true
+          })
+        }
       }
     }
-  }
-  return {
-    [CREATED] () {
-      let pageInstance = getCurrentPageInstance()
-      if (!pageInstance) return
-      this.$watch(
-        () => pageInstance.mpxPageStatus,
-        status => {
-          if (!status) return
-          const pageLifetimes = (this.$rawOptions && this.$rawOptions.pageLifetimes) || {}
-          // resize
-          if (/^resize[0-9]*$/.test(status) && typeof pageLifetimes.resize === 'function') return pageLifetimes.resize.call(this, systemInfo)
-          // show & hide
-          if (status in pageLifetimes && typeof pageLifetimes[status] === 'function') {
-            pageLifetimes[status].call(this)
-          }
-        }
-      )
-    }
-  }
+  })
+
+  return mixin
 }

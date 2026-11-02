@@ -1,0 +1,45 @@
+import { presetWind3 } from '@unocss/preset-wind3'
+import { presetLegacyCompat } from '@unocss/preset-legacy-compat'
+import presetRn from '../preset-rn/index'
+
+// eslint-disable-next-line
+const remRE = /(-?[\.\d]+)rem/g
+
+export default function presetMpx (options = {}) {
+  const uno = presetWind3(options)
+  const mpxCurrentTargetMode = process.env.MPX_CURRENT_TARGET_MODE
+  const isReact = mpxCurrentTargetMode === 'ios' || mpxCurrentTargetMode === 'android' || mpxCurrentTargetMode === 'harmony'
+  const extraPresets = []
+
+  if (isReact) {
+    extraPresets.push(presetRn())
+    options.dark = 'media'
+  }
+
+  extraPresets.push(presetLegacyCompat({
+    commaStyleColorFunction: true,
+    legacyColorSpace: true
+  }))
+
+  const { baseFontSize = 37.5 } = options
+
+  return {
+    ...uno,
+    name: '@mpxjs/unocss-base',
+    theme: {
+      ...uno.theme,
+      preflightRoot: ['page,view,text,div,span,::before,::after']
+    },
+    postprocess: (util) => {
+      util.entries.forEach((i) => {
+        const value = i[1]
+        if (typeof value === 'string' && remRE.test(value)) {
+          i[1] = value.replace(remRE, (_, p1) => mpxCurrentTargetMode === 'web'
+            ? `${p1 * baseFontSize * (100 / 750).toFixed(8)}vw`
+            : `${p1 * baseFontSize}rpx`)
+        }
+      })
+    },
+    presets: extraPresets
+  }
+}

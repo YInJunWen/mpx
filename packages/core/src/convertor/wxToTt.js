@@ -1,11 +1,18 @@
-import { error } from '../helper/log'
+import { error } from '@mpxjs/utils'
+
+const BEHAVIORS_MAP = [
+  'wx://form-field',
+  'wx://form-field-group',
+  'wx://form-field-button',
+  'wx://component-export'
+]
 
 export default {
   convert (options) {
     if (options.behaviors) {
       options.behaviors.forEach((behavior, idx) => {
-        if (typeof behavior === 'string') {
-          error(`Built-in behavior "${behavior}" is not supported in tt environment!`, global.currentResource)
+        if (BEHAVIORS_MAP.includes(behavior)) {
+          error(`Built-in behavior "${behavior}" is not supported in tt environment!`, global.currentResource || global.currentModuleId)
           options.behaviors.splice(idx, 1)
         }
       })

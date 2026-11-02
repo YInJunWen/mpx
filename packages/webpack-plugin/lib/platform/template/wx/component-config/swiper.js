@@ -7,9 +7,17 @@ module.exports = function ({ print }) {
   const qqPropLog = print({ platform: 'qq', tag: TAG_NAME, isError: false })
   const ttPropLog = print({ platform: 'bytedance', tag: TAG_NAME, isError: false })
   const webPropLog = print({ platform: 'web', tag: TAG_NAME, isError: false })
+  const ksPropLog = print({ platform: 'ks', tag: TAG_NAME, isError: false })
   const jdEventLog = print({ platform: 'jd', tag: TAG_NAME, isError: false, type: 'event' })
   const jdPropLog = print({ platform: 'jd', tag: TAG_NAME, isError: false })
   const qaPropLog = print({ platform: 'qa', tag: TAG_NAME, isError: false })
+  const iosPropLog = print({ platform: 'ios', tag: TAG_NAME, isError: false })
+  const iosEventLog = print({ platform: 'ios', tag: TAG_NAME, isError: false, type: 'event' })
+  const androidPropLog = print({ platform: 'android', tag: TAG_NAME, isError: false })
+  const androidEventLog = print({ platform: 'android', tag: TAG_NAME, isError: false, type: 'event' })
+  const harmonyPropLog = print({ platform: 'harmony', tag: TAG_NAME, isError: false })
+  const harmonyEventLog = print({ platform: 'harmony', tag: TAG_NAME, isError: false, type: 'event' })
+  const ksEventLog = print({ platform: 'ks', tag: TAG_NAME, isError: false, type: 'event' })
 
   return {
     test: TAG_NAME,
@@ -17,9 +25,21 @@ module.exports = function ({ print }) {
       el.isBuiltIn = true
       return 'mpx-swiper'
     },
+    ios (tag, { el }) {
+      el.isBuiltIn = true
+      return 'mpx-swiper'
+    },
+    android (tag, { el }) {
+      el.isBuiltIn = true
+      return 'mpx-swiper'
+    },
+    harmony (tag, { el }) {
+      el.isBuiltIn = true
+      return 'mpx-swiper'
+    },
     props: [
       {
-        test: /^(display-multiple-items|skip-hidden-item-layout|easing-function)$/,
+        test: /^(display-multiple-items|skip-hidden-item-layout)$/,
         ali: aliPropLog
       },
       {
@@ -45,6 +65,16 @@ module.exports = function ({ print }) {
       {
         test: /^(snap-to-edge|easing-function)$/,
         qa: qaPropLog
+      },
+      {
+        test: /^(display-multiple-items|snap-to-edge|easing-function)$/,
+        ios: iosPropLog,
+        android: androidPropLog,
+        harmony: harmonyPropLog
+      },
+      {
+        test: /^(snap-to-edge|previous-margin|next-margin|display-multiple-items|direction|layout-type|transformer-type|indicator-type|indicator-margin|indicator-spacing|indicator-radius|indicator-width|indicator-height|indicator-alignment|indicator-offset|scroll-with-animation|cache-extent)$/,
+        ks: ksPropLog
       }
     ],
     event: [
@@ -52,8 +82,8 @@ module.exports = function ({ print }) {
         test: /^(change|animationfinish)$/,
         ali (eventName) {
           const eventMap = {
-            'change': 'change',
-            'animationfinish': 'animationEnd'
+            change: 'change',
+            animationfinish: 'animationEnd'
           }
           return eventMap[eventName]
         }
@@ -61,7 +91,20 @@ module.exports = function ({ print }) {
       {
         test: /^(transition)$/,
         swan: baiduEventLog,
-        jd: jdEventLog
+        jd: jdEventLog,
+        ios: iosEventLog,
+        android: androidEventLog,
+        harmony: harmonyEventLog
+      },
+      {
+        test: /^(animationfinish)$/,
+        ios: iosEventLog,
+        android: androidEventLog,
+        harmony: harmonyEventLog
+      },
+      {
+        test: /^(onscrollstart|onscrollupdate|onscrollend)$/,
+        ks: ksEventLog
       }
     ]
   }

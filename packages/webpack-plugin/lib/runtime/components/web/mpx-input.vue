@@ -56,7 +56,7 @@
           if (val !== -1) this.setSelectionRange(undefined, val)
         },
         immediate: true
-      }
+      },
     },
     render (createElement) {
       const mergeBefore = {
@@ -85,7 +85,7 @@
       const domProps = {
         name: this.name,
         value: this.value,
-        type: this.password ? 'password' : this.type,
+        type: this.password ? 'password' : this.type === 'digit' ? 'number' : this.type,
         placeholder: this.placeholder,
         disabled: this.disabled,
         autofocus: this.focus || this.autoFocus
